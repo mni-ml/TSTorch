@@ -3,6 +3,7 @@ import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { Tensor } from './tensor.js';
 
 import type {
     Storage,
@@ -373,4 +374,36 @@ export function fastTensorReduce(
             outStorage[outPos] = acc;
         }
     };
+}
+
+/**
+ * Parallel matrix multiply. Outer loop (output elements) in parallel
+ * computes every entry of the output matrix
+ * 
+ * Restriction: it only handles inputs that are already 2D or 3D, and just pads 2D up to 3D
+ */
+// out[i, j] = sum over k of A[i, k] * B[k, j]
+export function fastMatrixMultiply(A: Tensor, B: Tensor): Tensor {
+    const [M, K] = A.data.shape;
+    const [K2, N] = B.data.shape;
+
+    if (!M || !K || !K2 || !N) {
+        return A;
+    }
+
+    // Make these always be exactly a 3 dimensional multiply, so the kernel only ever needs to deal with one batch loop + the 2D multiply
+    let Ais2D = false;
+    let Bis2D = false;
+    if (A.data.shape.length == 2) {
+        const a = A.contiguous().view(1, M, K);
+        Ais2D = true;
+    }
+    if (B.data.shape.length == 2) {
+        const b = B.contiguous().view(1, K2, N);
+        Bis2D = true;
+    }
+    // If both A and B had to be converted from 2D -> 3D, then we must remove a dimension at the end. Else it will simply just disappear as per mat mult
+    if (Ais2D && Bis2D) {
+        const both2D: boolean = false;
+    }
 }
