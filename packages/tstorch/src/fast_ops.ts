@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Tensor } from './tensor.js';
+import {shapeBroadcast} from './tensor_data.js'
 
 import type {
     Storage,
@@ -384,8 +385,9 @@ export function fastTensorReduce(
  */
 // out[i, j] = sum over k of A[i, k] * B[k, j]
 export function fastMatrixMultiply(A: Tensor, B: Tensor): Tensor {
-    const [M, K] = A.data.shape;
-    const [K2, N] = B.data.shape;
+    // Index from end of tensor shape, such that length - 2 is rows, length -1 is cols
+    const [M, K] = [A.shape[A.shape.length - 2], A.shape[A.shape.length - 1]];
+    const [K2, N] = [B.shape[B.shape.length - 2], B.shape[B.shape.length - 1]];
 
     if (!M || !K || !K2 || !N) {
         return A;
@@ -403,7 +405,36 @@ export function fastMatrixMultiply(A: Tensor, B: Tensor): Tensor {
         Bis2D = true;
     }
     // If both A and B had to be converted from 2D -> 3D, then we must remove a dimension at the end. Else it will simply just disappear as per mat mult
-    if (Ais2D && Bis2D) {
-        const both2D: boolean = false;
+    const both2D: boolean = Ais2D && Bis2D;
+    
+
+    // Get resulting dimensions as array
+    const outShape = [...shapeBroadcast(A.shape.slice(0, -2), B.shape.slice(0, -2))];
+    outShape.push(M);
+    outShape.push(N);
+
+    if (K !== K2) {
+        throw new Error("A is of shape MxK. Expected B of shape K2xN");
     }
+    let out = Tensor.zeros(outShape);
+
+    // Compute inner (dot) product
+    // Unoptimized
+    for (let m = 0; m < M; ++m) {
+        for (let n = 0; n < N; ++n) {
+            let acc = 0;
+
+            for (let k = 0; k < K; ++k) {
+                acc += A.get([m * K, k]) * B.get([k * N, n]);
+            }
+            out.set([m * M, n], acc);
+        }
+    }
+
+    // Revert extra 3rd dimension
+    if (both2D) {
+        out = out.view(M,N);
+    }
+
+    return out;
 }
