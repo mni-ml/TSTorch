@@ -1,27 +1,53 @@
-TSTorch is a TypeScript implementation of PyTorch, intended as a working library and educational resource.
+# TSTorch
 
-TSTorch exposes the core execution mechanisms behind modern deep learning systems: autograd, graph capture, kernel fusion, and GPU memory planning, using WebGPU as the primary execution target.
+TSTorch is a model execution observability runtime for developers who need to know whether a neural network will actually work on a real device.
+Unlike PyTorch or ONNX Runtime, which focus on running models, TSTorch focuses on **revealing what actually happened while the model executed**. That is, latency sources, memory peaks, GPU dispatch behavior, and operator fusion.
 
-> Why not just use Tensorflow.js?
+## Typical workflow:
 
-We want to:
-- Be WebGPU-first by design
-- Expose autograd and graph execution internals
-- Support graph capture and compiler-style optimizations
-- Make kernel fusion and memory planning observable
+1. Train or fine-tune in PyTorch
+2. Export to ONNX
+3. Run with TSTorch on a real device
+4. Inspect latency + memory behavior
+5. Decide if the device can support it
 
-In short, TensorFlow.js is a product.
-TSTorch is a systems-level exploration of how such products are built.
+After running a model you will see information similar to:
 
-# Who is this for?
+```
+Model: resnet18.onnx
 
-Engineers interested in ML infrastructure and compilers
+Total latency: 42.6 ms
+Peak GPU memory: 312 MB
+GPU dispatches: 184
 
-Developers building ML-powered web applications who want deeper control
+Top latency contributors:
+conv2d_13        9.8 ms
+batchnorm_13     6.4 ms
+relu_13          fused
+matmul_1         5.1 ms
 
-Students learning how frameworks like PyTorch and Torch 2 actually work under the hood
+Operator fusion:
+conv + batchnorm + relu -> fused (12 occurrences)
 
-# Steps to use
+Conclusion:
+Model is deployable on mid-range integrated GPUs.
+```
 
+Note: while TSTorch is capable and correct for training, serving APIs, and maximum throughput inference, they are not usecases why a user should adopt TSTorch today
+
+## Project status
+
+Active early development.
+
+Goals:
+
+* predictable execution traces
+* stable ONNX subset
+* reproducible latency reporting across devices
+* tooling for edge deployment decisions
+
+---
+
+## Steps to run demo
 To run demo: `pnpm run demo`
 To run tests: `pnpm run test-tstorch`
