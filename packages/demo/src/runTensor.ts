@@ -1,0 +1,145 @@
+import { Tensor, TensorData, shapeProduct, datasets, SGD, Module, Parameter, destroyPool } from "tstorch";
+
+type Point = [number, number];
+type Graph = { N: number; X: Point[]; y: number[] };
+
+function RParam(...shape: number[]): Parameter<Tensor> {
+    const size = shapeProduct(shape);
+    const storage = new Float64Array(size);
+    for (let i = 0; i < size; i++) {
+        storage[i] = 2 * (Math.random() - 0.5);
+    }
+    return new Parameter(new Tensor(new TensorData(storage, shape)));
+}
+
+class Linear extends Module<Parameter<Tensor>> {
+    weights: Parameter<Tensor>;
+    bias: Parameter<Tensor>;
+    outSize: number;
+
+    constructor(inSize: number, outSize: number) {
+        super();
+        this.outSize = outSize;
+        this.weights = RParam(inSize, outSize);
+        this.bias = RParam(outSize);
+    }
+
+    forward(x: Tensor): Tensor {
+        const batch = x.shape[0]!;
+        const inSize = x.shape[1]!;
+        return this.weights.value
+            .view(1, inSize, this.outSize)
+            .mul(x.view(batch, inSize, 1))
+            .sum(1)
+            .view(batch, this.outSize)
+            .add(this.bias.value.view(this.outSize));
+    }
+}
+
+class Network extends Module<Parameter<Tensor>> {
+    layer1: Linear;
+    layer2: Linear;
+    layer3: Linear;
+
+    constructor(hiddenLayers: number) {
+        super();
+        this.layer1 = new Linear(2, hiddenLayers);
+        this.layer2 = new Linear(hiddenLayers, hiddenLayers);
+        this.layer3 = new Linear(hiddenLayers, 1);
+    }
+
+    forward(x: Tensor): Tensor {
+        let h = this.layer1.forward(x).relu();
+        h = this.layer2.forward(h).relu();
+        return this.layer3.forward(h).sigmoid();
+    }
+}
+
+function defaultLogFn(epoch: number, totalLoss: number, correct: number) {
+    console.log("Epoch ", epoch, " loss ", totalLoss, " correct ", correct);
+}
+
+class TensorTrain {
+    hiddenLayers: number;
+    model: Network;
+    learningRate!: number;
+    maxEpochs!: number;
+
+    constructor(hiddenLayers: number) {
+        this.hiddenLayers = hiddenLayers;
+        this.model = new Network(hiddenLayers);
+    }
+
+    runOne(x: Point): Tensor {
+        return this.model.forward(Tensor.tensor([x]));
+    }
+
+    train(data: Graph, learningRate: number, maxEpochs: number = 500, logFn = defaultLogFn) {
+        this.learningRate = learningRate;
+        this.maxEpochs = maxEpochs;
+        this.model = new Network(this.hiddenLayers);
+        const optim = new SGD(this.model.parameters(), learningRate);
+
+        const X = Tensor.tensor(data.X);
+        const y = Tensor.tensor(data.y);
+
+        for (let epoch = 1; epoch <= this.maxEpochs; epoch++) {
+            optim.zeroGrad();
+
+            const out = this.model.forward(X).view(data.N);
+
+            // Binary cross-entropy via: prob = out*y + (out-1)*(y-1)
+            const prob = out.mul(y).add(out.sub(1.0).mul(y.sub(1.0)));
+            const loss = prob.log().neg();
+
+            loss.mul(1 / data.N).sum().backward();
+            const totalLoss = loss.sum().item();
+
+            optim.step();
+
+            // Reset input tensor grads to avoid accumulation across epochs
+            X.zero_grad_();
+            y.zero_grad_();
+
+            if (epoch % 500 === 0 || epoch === this.maxEpochs) {
+                let correct = 0;
+                for (let i = 0; i < data.N; i++) {
+                    const pred = out.get([i]) > 0.5 ? 1 : 0;
+                    if (pred === data.y[i]) correct++;
+                }
+                logFn(epoch, totalLoss, correct);
+            }
+        }
+    }
+}
+
+export default function runTensor() {
+    const PTS = 50;
+
+    const data1 = datasets["Simple"](PTS) as Graph;
+    const data2 = datasets["Diag"](PTS) as Graph;
+    const data3 = datasets["Split"](PTS) as Graph;
+    const data4 = datasets["Xor"](PTS) as Graph;
+    const data5 = datasets["Circle"](PTS) as Graph;
+    const data6 = datasets["Spiral"](PTS) as Graph;
+
+    console.log("=== Simple [4] ===");
+    new TensorTrain(4).train(data1, 0.5);
+
+    console.log("\n=== Diag [4] ===");
+    new TensorTrain(4).train(data2, 0.5);
+
+    console.log("\n=== Split [8] ===");
+    new TensorTrain(8).train(data3, 0.5);
+
+    console.log("\n=== Xor [8] ===");
+    new TensorTrain(8).train(data4, 0.5);
+
+    console.log("\n=== Circle [8] ===");
+    new TensorTrain(8).train(data5, 0.5, 1000);
+
+    console.log("\n=== Spiral [8] ===");
+    new TensorTrain(8).train(data6, 0.5, 1000);
+
+    destroyPool();
+}

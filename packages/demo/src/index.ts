@@ -1,6 +1,10 @@
-import { runDispatchParity } from "./dispatch_parity.js";
 import runScalar from "./runScalar.js";
+import runTensor from "./runTensor.js";
 
-runScalar();
-const result = runDispatchParity();
-console.log(result);
+const mode = process.argv[2] ?? "tensor";
+
+if (mode === "scalar") {
+    runScalar();
+} else {
+    runTensor();
+}

@@ -8,7 +8,7 @@ Attributes:
     training : Whether the module is in training mode or evaluation mode
 */
 
-import type { Tensor } from "./tensor.js";
+import { Tensor } from "./tensor.js";
 import { Scalar } from "./scalar.js";
 
 export class Module<P extends BaseParameter = BaseParameter> {
@@ -104,6 +104,9 @@ export class Parameter<T=Tensor> extends BaseParameter {
     get grad() {
         if (this.value instanceof Scalar) {
             return this.value.derivative ?? 0;
+        }
+        if (this.value instanceof Tensor) {
+            return this.value.grad;
         }
         return 0;
     }

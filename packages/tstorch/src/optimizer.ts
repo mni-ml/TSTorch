@@ -1,6 +1,7 @@
 import { Scalar } from "./scalar.js";
 import { Parameter } from "./module.js";
-import type { Tensor } from "./tensor.js";
+import { Tensor } from "./tensor.js";
+import { TensorData } from "./tensor_data.js";
 
 export type ParameterValue = Scalar | Tensor;
 
@@ -15,7 +16,7 @@ export class Optimizer {
 export class SGD extends Optimizer {
     lr: number;
 
-    constructor(parameters: Parameter<Scalar>[], lr: number = 1.0) {
+    constructor(parameters: Parameter<ParameterValue>[], lr: number = 1.0) {
         super(parameters);
         this.lr = lr;
     }
@@ -44,8 +45,21 @@ export class SGD extends Optimizer {
                 continue;
             }
 
-            // Check for derivative (Scalar-like objects)
-            if (p.value instanceof Scalar) {
+            if (p.value instanceof Tensor) {
+                const grad = p.value.grad;
+                if (grad) {
+                    // Raw storage arithmetic to create a new leaf tensor (no history).
+                    // Using tensor ops would create computation history that pollutes
+                    // the next epoch's backward pass.
+                    const valStorage = p.value.data.storage;
+                    const gradStorage = grad.data.storage;
+                    const newStorage = new Float64Array(p.value.size);
+                    for (let i = 0; i < p.value.size; i++) {
+                        newStorage[i] = valStorage[i]! - this.lr * gradStorage[i]!;
+                    }
+                    p.update(new Tensor(new TensorData(newStorage, [...p.value.shape])) as any);
+                }
+            } else if (p.value instanceof Scalar) {
                 const grad = p.value.derivative ?? 0;
                 p.value.data -= this.lr * grad;
             }
