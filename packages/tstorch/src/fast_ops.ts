@@ -3,7 +3,6 @@ import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
-
 import type {
     Storage,
     Shape,

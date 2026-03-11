@@ -11,7 +11,7 @@ import {
 import { fastTensorMap as tensorMap, fastTensorZip as tensorZip, fastTensorReduce as tensorReduce } from './fast_ops.js';
 import * as operators from './operators.js'
 import { Tensor } from './tensor.js';
-
+import { tensorMatrixMultiply } from './tensor_ops.js';
 
 
 function zeros(shape: Shape): TensorData {
@@ -403,5 +403,82 @@ export class Contiguous extends TensorFunction {
     }
     static backward(ctx: TensorContext, gradOutput: Tensor): Tensor[] {
         return [gradOutput];
+    }
+}
+
+function transposeLast2(x: Tensor): Tensor {
+    // swap the last two dimension and the batch dimensions stay the same
+    const d = x.dims;
+    if (d < 2) {
+        throw new Error("transposeLast2 needs at least 2 dims");
+    }
+
+    const order: number[] = [...Array(d).keys()];
+    const tmp = order[d - 2];
+    order[d - 2] = order[d - 1]!;
+    order[d - 1] = tmp!;
+    return x.permute(...order);
+}
+
+function reduceToShape(t: Tensor, targetShape: Shape): Tensor {
+    let result = t;
+
+    const tShape = t.shape;
+    const tDims = tShape.length;
+    const targetDims = targetShape.length;
+
+    // Pad target shape on the left
+    const paddedTarget = [
+        ...Array(tDims - targetDims).fill(1),
+        ...targetShape,
+    ];
+
+    for (let dim = 0; dim < tDims; dim++) {
+        if (paddedTarget[dim] === 1 && tShape[dim] !== 1) {
+            result = result.sum(dim);
+            result.history = null;
+        }
+    }
+
+    // If we added leading dimensions, remove them
+    if (tDims !== targetDims) {
+        result = result.view(...targetShape);
+        result.history = null;
+    }
+
+    return result;
+}
+
+export class MatMul extends TensorFunction {
+    static forward(ctx: TensorContext, a: Tensor, b: Tensor): Tensor {
+        ctx.saveForBackward(a, b);
+        return tensorMatrixMultiply(a, b);
+    }
+
+    static backward(ctx: TensorContext, gradOut: Tensor): Tensor[] {
+        const saved = ctx.savedTensors;
+        if (!saved || saved.length !== 2) {
+            throw new Error("MatMul backward: saved tensors missing");
+        }
+
+        const a = saved[0]!;
+        const b = saved[1]!;
+
+        const bT = transposeLast2(b);
+        const aT = transposeLast2(a);
+
+        const gradA = tensorMatrixMultiply(gradOut, bT);
+        const gradB = tensorMatrixMultiply(aT, gradOut);
+
+        gradA.history = null;
+        gradB.history = null;
+
+        const gradAFinal = reduceToShape(gradA, a.shape);
+        const gradBFinal = reduceToShape(gradB, b.shape);
+
+        gradAFinal.history = null;
+        gradBFinal.history = null;
+
+        return [gradAFinal, gradBFinal];
     }
 }

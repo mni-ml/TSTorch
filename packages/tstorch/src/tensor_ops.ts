@@ -11,6 +11,9 @@ import {
     broadcastIndex
 } from './tensor_data.js';
 
+import { Tensor } from './tensor.js';
+import { shapeBroadcast } from './tensor_data.js';
+
 export function tensorMap(
     fn: (x: number) => number
 ): (
@@ -133,4 +136,76 @@ export function tensorReduce(
             outStorage[outPos] = acc;
         }
     }
+}
+
+/**
+ * Matrix multiply supporting 2D and 3D inputs with batch broadcasting.
+ * 2D inputs are padded to 3D internally; if both were 2D the output is squeezed back.
+ */
+export function tensorMatrixMultiply(A: Tensor, B: Tensor): Tensor {
+    // Index from end of tensor shape, such that length - 2 is rows, length -1 is cols
+    const [M, K] = [A.shape[A.shape.length - 2], A.shape[A.shape.length - 1]];
+    const [K2, N] = [B.shape[B.shape.length - 2], B.shape[B.shape.length - 1]];
+
+    if (!M || !K || !K2 || !N) {
+        return A;
+    }
+
+    if (K !== K2) {
+        throw new Error("A is of shape MxK. Expected B of shape K2xN");
+    }
+
+    let a: Tensor = A;
+    let b: Tensor = B;
+
+    // Make these always be exactly a 3 dimensional multiply, so the kernel only ever needs to deal with one batch loop + the 2D multiply
+    let Ais2D = false;
+    let Bis2D = false;
+    if (A.data.shape.length === 2) {
+        a = A.contiguous().view(1, M, K);
+        Ais2D = true;
+    }
+    if (B.data.shape.length === 2) {
+        b = B.contiguous().view(1, K2, N);
+        Bis2D = true;
+    }
+    // If both A and B had to be converted from 2D -> 3D, then we must remove a dimension at the end. Else it will simply just disappear as per mat mult
+    const both2D: boolean = Ais2D && Bis2D;
+
+    // Get resulting dimensions as array
+    const outShape = [...shapeBroadcast(a.shape.slice(0, -2), b.shape.slice(0, -2))];
+    outShape.push(M);
+    outShape.push(N);
+    let out = Tensor.zeros(outShape);
+
+    const size = shapeProduct(outShape);
+
+    const outIndex: number[] = new Array(outShape.length).fill(0);
+    const aIndex: number[] = new Array(a.shape.length).fill(0);
+    const bIndex: number[] = new Array(b.shape.length).fill(0);
+
+    for (let ordinal = 0; ordinal < size; ordinal++) {
+        toIndex(ordinal, outShape, outIndex);
+        
+        broadcastIndex(outIndex, outShape, a.shape, aIndex);
+        broadcastIndex(outIndex, outShape, b.shape, bIndex);
+
+        let acc = 0;
+
+        for (let k = 0; k < K; k++) {
+            aIndex[aIndex.length - 1] = k;      // K dim in A
+            bIndex[bIndex.length - 2] = k;      // K dim in B
+
+            acc += a.get(aIndex) * b.get(bIndex);
+        }
+
+        out.set(outIndex, acc);
+    }
+
+    // Revert extra 3rd dimension
+    if (both2D) {
+        out = out.view(M,N);
+    }
+
+    return out;
 }
