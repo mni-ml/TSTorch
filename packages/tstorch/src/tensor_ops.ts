@@ -153,17 +153,21 @@ export function tensorMatrixMultiply(A: Tensor, B: Tensor): Tensor {
         return A;
     }
 
+    if (K !== K2) {
+        throw new Error("A is of shape MxK. Expected B of shape K2xN");
+    }
+
     let a: Tensor = A;
     let b: Tensor = B;
 
     // Make these always be exactly a 3 dimensional multiply, so the kernel only ever needs to deal with one batch loop + the 2D multiply
     let Ais2D = false;
     let Bis2D = false;
-    if (A.data.shape.length == 2) {
+    if (A.data.shape.length === 2) {
         a = A.contiguous().view(1, M, K);
         Ais2D = true;
     }
-    if (B.data.shape.length == 2) {
+    if (B.data.shape.length === 2) {
         b = B.contiguous().view(1, K2, N);
         Bis2D = true;
     }
@@ -174,10 +178,6 @@ export function tensorMatrixMultiply(A: Tensor, B: Tensor): Tensor {
     const outShape = [...shapeBroadcast(a.shape.slice(0, -2), b.shape.slice(0, -2))];
     outShape.push(M);
     outShape.push(N);
-
-    if (K !== K2) {
-        throw new Error("A is of shape MxK. Expected B of shape K2xN");
-    }
     let out = Tensor.zeros(outShape);
 
     const size = shapeProduct(outShape);

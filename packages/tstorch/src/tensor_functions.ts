@@ -450,38 +450,35 @@ function reduceToShape(t: Tensor, targetShape: Shape): Tensor {
 }
 
 export class MatMul extends TensorFunction {
-  static forward(ctx: TensorContext, a: Tensor, b: Tensor): Tensor {
-    // Save inputs for backward
-    ctx.saveForBackward(a, b);
-    return tensorMatrixMultiply(a, b);
-  }
-
-  static backward(ctx: TensorContext, gradOut: Tensor): Tensor[] {
-    const saved = ctx.savedTensors;
-    if (!saved || saved.length !== 2) {
-        throw new Error("MatMul backward: saved tensors missing");
+    static forward(ctx: TensorContext, a: Tensor, b: Tensor): Tensor {
+        ctx.saveForBackward(a, b);
+        return tensorMatrixMultiply(a, b);
     }
 
-    const a = saved[0]!;
-    const b = saved[1]!;
+    static backward(ctx: TensorContext, gradOut: Tensor): Tensor[] {
+        const saved = ctx.savedTensors;
+        if (!saved || saved.length !== 2) {
+            throw new Error("MatMul backward: saved tensors missing");
+        }
 
-    const bT = transposeLast2(b);
-    const aT = transposeLast2(a);
+        const a = saved[0]!;
+        const b = saved[1]!;
 
-    const gradA = tensorMatrixMultiply(gradOut, bT);
-    const gradB = tensorMatrixMultiply(aT, gradOut);
+        const bT = transposeLast2(b);
+        const aT = transposeLast2(a);
 
-    // detach
-    gradA.history = null;
-    gradB.history = null;
+        const gradA = tensorMatrixMultiply(gradOut, bT);
+        const gradB = tensorMatrixMultiply(aT, gradOut);
 
-    const gradAFinal = reduceToShape(gradA, a.shape);
-    const gradBFinal = reduceToShape(gradB, b.shape);
+        gradA.history = null;
+        gradB.history = null;
 
-    // detach again after reduction
-    gradAFinal.history = null;
-    gradBFinal.history = null;
+        const gradAFinal = reduceToShape(gradA, a.shape);
+        const gradBFinal = reduceToShape(gradB, b.shape);
 
-    return [gradAFinal, gradBFinal];
+        gradAFinal.history = null;
+        gradBFinal.history = null;
+
+        return [gradAFinal, gradBFinal];
     }
 }
