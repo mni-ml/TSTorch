@@ -209,3 +209,89 @@ export function tensorMatrixMultiply(A: Tensor, B: Tensor): Tensor {
 
     return out;
 }
+
+/**
+ * Low-level 1D convolution kernel operating on raw Storage/Shape/Strides.
+ *
+ * Input shape:  [batch, in_channels, width]
+ * Weight shape: [out_channels, in_channels, kernel_width]
+ * Output shape: [batch, out_channels, out_width]  (caller pre-allocates)
+ *
+ * When reverse=false: output[b,oc,t] = sum_{ic,k} input[b,ic,t+k] * weight[oc,ic,k]
+ * When reverse=true:  output[b,oc,t] = sum_{ic,k} input[b,ic,t-k] * weight[oc,ic,k]
+ *
+ * Out-of-bounds input positions are treated as 0.
+ */
+export function _tensorConv1d(
+    outStorage: Storage, outShape: Shape, outStrides: Strides,
+    inputStorage: Storage, inputShape: Shape, inputStrides: Strides,
+    weightStorage: Storage, weightShape: Shape, weightStrides: Strides,
+    reverse: boolean,
+): void {
+    const outSize = shapeProduct(outShape);
+    const inChannels = inputShape[1]!;
+    const width = inputShape[2]!;
+    const kw = weightShape[2]!;
+
+    const outIndex = [0, 0, 0];
+    const inputIndex = [0, 0, 0];
+    const weightIndex = [0, 0, 0];
+
+    for (let ordinal = 0; ordinal < outSize; ordinal++) {
+        toIndex(ordinal, outShape, outIndex);
+        const b = outIndex[0]!;
+        const oc = outIndex[1]!;
+        const t = outIndex[2]!;
+
+        let val = 0;
+        for (let ic = 0; ic < inChannels; ic++) {
+            for (let k = 0; k < kw; k++) {
+                const s = reverse ? t - k : t + k;
+                if (s >= 0 && s < width) {
+                    inputIndex[0] = b;
+                    inputIndex[1] = ic;
+                    inputIndex[2] = s;
+                    weightIndex[0] = oc;
+                    weightIndex[1] = ic;
+                    weightIndex[2] = k;
+                    val += inputStorage[indexToPosition(inputIndex, inputStrides)]!
+                         * weightStorage[indexToPosition(weightIndex, weightStrides)]!;
+                }
+            }
+        }
+
+        outStorage[indexToPosition(outIndex, outStrides)] = val;
+    }
+}
+
+/**
+ * 1D convolution: input [batch, in_channels, width] x weight [out_channels, in_channels, kw]
+ * -> output [batch, out_channels, width].
+ */
+export function tensorConv1d(
+    input: Tensor, weight: Tensor, reverse: boolean = false,
+): Tensor {
+    const batch = input.shape[0]!;
+    const inChannels = input.shape[1]!;
+    const width = input.shape[2]!;
+    const outChannels = weight.shape[0]!;
+    const weightInChannels = weight.shape[1]!;
+
+    if (inChannels !== weightInChannels) {
+        throw new Error(
+            `Conv1d channel mismatch: input has ${inChannels} channels but weight expects ${weightInChannels}`,
+        );
+    }
+
+    const outShape: Shape = [batch, outChannels, width];
+    const out = Tensor.zeros(outShape);
+
+    _tensorConv1d(
+        out.data.storage, out.data.shape, out.data.strides,
+        input.data.storage, input.data.shape, input.data.strides,
+        weight.data.storage, weight.data.shape, weight.data.strides,
+        reverse,
+    );
+
+    return out;
+}

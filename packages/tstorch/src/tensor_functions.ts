@@ -11,7 +11,7 @@ import {
 import { fastTensorMap as tensorMap, fastTensorZip as tensorZip, fastTensorReduce as tensorReduce } from './fast_ops.js';
 import * as operators from './operators.js'
 import { Tensor } from './tensor.js';
-import { tensorMatrixMultiply } from './tensor_ops.js';
+import { tensorMatrixMultiply, tensorConv1d, _tensorConv1d } from './tensor_ops.js';
 
 
 function zeros(shape: Shape): TensorData {
@@ -480,5 +480,48 @@ export class MatMul extends TensorFunction {
         gradBFinal.history = null;
 
         return [gradAFinal, gradBFinal];
+    }
+}
+
+export class Conv1d extends TensorFunction {
+    static forward(ctx: TensorContext, input: Tensor, weight: Tensor): Tensor {
+        ctx.saveForBackward(input, weight);
+        return tensorConv1d(input, weight, false);
+    }
+
+    static backward(ctx: TensorContext, gradOut: Tensor): Tensor[] {
+        const saved = ctx.savedTensors;
+        if (!saved || saved.length !== 2) {
+            throw new Error("Conv1d backward: saved tensors missing");
+        }
+
+        const input = saved[0]!;
+        const weight = saved[1]!;
+        const inChannels = input.shape[1]!;
+        const outChannels = weight.shape[0]!;
+        const kw = weight.shape[2]!;
+
+        // grad_input: convolve grad_output with transposed weight, reversed
+        const newWeight = weight.permute(1, 0, 2);
+        const gradInput = tensorConv1d(gradOut, newWeight, true);
+        gradInput.history = null;
+
+        // grad_weight: use _tensorConv1d with custom output shape [IC, OC, KW]
+        const newInput = input.permute(1, 0, 2);
+        const newGradOut = gradOut.permute(1, 0, 2);
+        const gradWeightData = TensorData.zeros([inChannels, outChannels, kw]);
+
+        _tensorConv1d(
+            gradWeightData.storage, gradWeightData.shape, gradWeightData.strides,
+            newInput.data.storage, newInput.data.shape, newInput.data.strides,
+            newGradOut.data.storage, newGradOut.data.shape, newGradOut.data.strides,
+            false,
+        );
+
+        // Permute [IC, OC, KW] -> [OC, IC, KW] and make contiguous
+        const gradWeight = new Tensor(contiguous(gradWeightData.permute(1, 0, 2)));
+        gradWeight.history = null;
+
+        return [gradInput, gradWeight];
     }
 }

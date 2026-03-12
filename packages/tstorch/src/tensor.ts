@@ -27,6 +27,7 @@ import {
     View as ViewFn,
     Contiguous as ContiguousFn,
     MatMul as MatMulFn,
+    Conv1d as Conv1dFn,
 } from './tensor_functions.js';
 import { backPropagateTensor } from './autodiff.js';
 
@@ -233,6 +234,10 @@ export class Tensor {
 
     matmul(other: Tensor): Tensor {
         return Tensor.apply(MatMulFn, this, other);
+    }
+
+    conv1d(weight: Tensor): Tensor {
+        return Tensor.apply(Conv1dFn, this, weight);
     }
 
     sum(dim?: number): Tensor {

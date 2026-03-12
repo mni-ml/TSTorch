@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { fastTensorMap, fastTensorZip, fastTensorReduce, destroyPool } from './fast_ops.js';
-import { tensorMap, tensorZip, tensorReduce } from './tensor_ops.js';
+import { tensorMap, tensorZip, tensorReduce, _tensorConv1d, tensorConv1d } from './tensor_ops.js';
 import { TensorData, shapeProduct } from './tensor_data.js';
 import { Tensor } from './tensor.js';
 
@@ -938,6 +938,263 @@ describe("backward pass through fast_ops", () => {
         tensorGradCheck(
             (x, y) => x.mul(y).add(x).relu().sum(1).sigmoid().exp(),
             a, b,
+        );
+    });
+});
+
+// ============================================================
+// Task 4.1 - 1D Convolution (_tensorConv1d)
+// ============================================================
+
+describe("_tensorConv1d forward", () => {
+    test("basic single-batch single-channel conv (guide example)", () => {
+        // input=[1,2,3,4,5,6], weight=[5,2,3] -> [18,28,38,48,37,30]
+        const input = Tensor.tensor([[[1, 2, 3, 4, 5, 6]]]);   // [1, 1, 6]
+        const weight = Tensor.tensor([[[5, 2, 3]]]);            // [1, 1, 3]
+        const out = Tensor.zeros([1, 1, 6]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        const result = Array.from(out.data.storage);
+        expect(result).toEqual([18, 28, 38, 48, 37, 30]);
+    });
+
+    test("kernel width 1 acts as channel-wise scaling", () => {
+        const input = Tensor.tensor([[[1, 2, 3, 4]]]);   // [1, 1, 4]
+        const weight = Tensor.tensor([[[3]]]);            // [1, 1, 1]
+        const out = Tensor.zeros([1, 1, 4]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        expect(Array.from(out.data.storage)).toEqual([3, 6, 9, 12]);
+    });
+
+    test("kernel width equals input width", () => {
+        const input = Tensor.tensor([[[1, 2, 3]]]);    // [1, 1, 3]
+        const weight = Tensor.tensor([[[1, 1, 1]]]);   // [1, 1, 3]
+        const out = Tensor.zeros([1, 1, 3]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        // t=0: 1+2+3=6, t=1: 2+3+0=5, t=2: 3+0+0=3
+        expect(Array.from(out.data.storage)).toEqual([6, 5, 3]);
+    });
+
+    test("multi-channel: in_channels=2, out_channels=1", () => {
+        // input [1, 2, 4]: two channels, width 4
+        const input = Tensor.tensor([[[1, 2, 3, 4], [5, 6, 7, 8]]]);
+        // weight [1, 2, 2]: one output channel, two input channels, kernel 2
+        const weight = Tensor.tensor([[[1, 0], [0, 1]]]);
+        const out = Tensor.zeros([1, 1, 4]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        // oc=0, t=0: ic0: 1*1+2*0=1, ic1: 5*0+6*1=6 -> 7
+        // oc=0, t=1: ic0: 2*1+3*0=2, ic1: 6*0+7*1=7 -> 9
+        // oc=0, t=2: ic0: 3*1+4*0=3, ic1: 7*0+8*1=8 -> 11
+        // oc=0, t=3: ic0: 4*1+OOB=4, ic1: 8*0+OOB=0 -> 4
+        expect(Array.from(out.data.storage)).toEqual([7, 9, 11, 4]);
+    });
+
+    test("multi-output channels", () => {
+        const input = Tensor.tensor([[[1, 2, 3]]]);   // [1, 1, 3]
+        // weight [2, 1, 2]: two output channels
+        const weight = Tensor.tensor([[[1, 0]], [[0, 1]]]);
+        const out = Tensor.zeros([1, 2, 3]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        // oc=0 (weight=[1,0]): [1, 2, 3]
+        // oc=1 (weight=[0,1]): [2, 3, 0]
+        expect(Array.from(out.data.storage)).toEqual([1, 2, 3, 2, 3, 0]);
+    });
+
+    test("batch processing (batch=2)", () => {
+        const input = Tensor.tensor([
+            [[1, 2, 3]],
+            [[4, 5, 6]],
+        ]);  // [2, 1, 3]
+        const weight = Tensor.tensor([[[1, 1]]]);  // [1, 1, 2]
+        const out = Tensor.zeros([2, 1, 3]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        // batch 0: [1+2, 2+3, 3+0] = [3, 5, 3]
+        // batch 1: [4+5, 5+6, 6+0] = [9, 11, 6]
+        expect(Array.from(out.data.storage)).toEqual([3, 5, 3, 9, 11, 6]);
+    });
+
+    test("reverse convolution", () => {
+        const input = Tensor.tensor([[[1, 2, 3, 4, 5, 6]]]);   // [1, 1, 6]
+        const weight = Tensor.tensor([[[5, 2, 3]]]);            // [1, 1, 3]
+        const out = Tensor.zeros([1, 1, 6]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            input.data.storage, input.data.shape, input.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            true,
+        );
+
+        // reverse: s = t - k
+        // t=0: k=0->s=0: 1*5=5,  k=1->s=-1: OOB, k=2->s=-2: OOB -> 5
+        // t=1: k=0->s=1: 2*5=10, k=1->s=0: 1*2=2, k=2->s=-1: OOB -> 12
+        // t=2: k=0->s=2: 3*5=15, k=1->s=1: 2*2=4, k=2->s=0: 1*3=3 -> 22
+        // t=3: k=0->s=3: 4*5=20, k=1->s=2: 3*2=6, k=2->s=1: 2*3=6 -> 32
+        // t=4: k=0->s=4: 5*5=25, k=1->s=3: 4*2=8, k=2->s=2: 3*3=9 -> 42
+        // t=5: k=0->s=5: 6*5=30, k=1->s=4: 5*2=10, k=2->s=3: 4*3=12 -> 52
+        expect(Array.from(out.data.storage)).toEqual([5, 12, 22, 32, 42, 52]);
+    });
+
+    test("non-contiguous input (permuted)", () => {
+        // Create a [1, 3, 1] tensor and permute to [1, 1, 3]
+        const base = Tensor.tensor([[[1], [2], [3]]]);  // [1, 3, 1]
+        const permuted = base.permute(0, 2, 1);         // [1, 1, 3]
+        const weight = Tensor.tensor([[[1, 1]]]);        // [1, 1, 2]
+        const out = Tensor.zeros([1, 1, 3]);
+
+        _tensorConv1d(
+            out.data.storage, out.data.shape, out.data.strides,
+            permuted.data.storage, permuted.data.shape, permuted.data.strides,
+            weight.data.storage, weight.data.shape, weight.data.strides,
+            false,
+        );
+
+        // [1+2, 2+3, 3+0] = [3, 5, 3]
+        expect(Array.from(out.data.storage)).toEqual([3, 5, 3]);
+    });
+});
+
+// ============================================================
+// Task 4.1 - tensorConv1d high-level wrapper
+// ============================================================
+
+describe("tensorConv1d wrapper", () => {
+    test("matches low-level kernel", () => {
+        const input = Tensor.tensor([[[1, 2, 3, 4, 5, 6]]]);
+        const weight = Tensor.tensor([[[5, 2, 3]]]);
+
+        const result = tensorConv1d(input, weight, false);
+
+        expect(result.shape).toEqual([1, 1, 6]);
+        expect(Array.from(result.data.storage)).toEqual([18, 28, 38, 48, 37, 30]);
+    });
+
+    test("channel mismatch throws", () => {
+        const input = Tensor.tensor([[[1, 2, 3]]]);     // [1, 1, 3]
+        const weight = Tensor.tensor([[[1, 1], [2, 2]]]); // [1, 2, 2]
+
+        expect(() => tensorConv1d(input, weight)).toThrow(/channel mismatch/i);
+    });
+
+    test("multi-batch multi-channel", () => {
+        const input = Tensor.tensor([
+            [[1, 2], [3, 4]],
+            [[5, 6], [7, 8]],
+        ]);  // [2, 2, 2]
+        const weight = Tensor.tensor([[[1, 0], [0, 1]]]);  // [1, 2, 2]
+
+        const result = tensorConv1d(input, weight);
+
+        // batch 0, oc 0: ic0: 1*1+2*0=1, ic1: 3*0+4*1=4 -> t=0: 5
+        //                ic0: 2*1+OOB=2, ic1: 4*0+OOB=0 -> t=1: 2
+        // batch 1, oc 0: ic0: 5*1+6*0=5, ic1: 7*0+8*1=8 -> t=0: 13
+        //                ic0: 6*1+OOB=6, ic1: 8*0+OOB=0 -> t=1: 6
+        expect(result.shape).toEqual([2, 1, 2]);
+        expect(Array.from(result.data.storage)).toEqual([5, 2, 13, 6]);
+    });
+});
+
+// ============================================================
+// Task 4.1 - Tensor.conv1d method + backward
+// ============================================================
+
+describe("Tensor.conv1d", () => {
+    test("forward produces correct output", () => {
+        const input = Tensor.tensor([[[1, 2, 3, 4, 5, 6]]]);
+        const weight = Tensor.tensor([[[5, 2, 3]]]);
+
+        const result = input.conv1d(weight);
+
+        expect(result.shape).toEqual([1, 1, 6]);
+        expect(Array.from(result.data.storage)).toEqual([18, 28, 38, 48, 37, 30]);
+    });
+
+    test("conv1d backward - gradient check on input", () => {
+        const input = Tensor.rand([1, 1, 6]);
+        const weight = Tensor.rand([1, 1, 3]);
+        tensorGradCheck((x, w) => x.conv1d(w), input, weight);
+    });
+
+    test("conv1d backward - gradient check multi-channel", () => {
+        const input = Tensor.rand([2, 3, 5]);
+        const weight = Tensor.rand([4, 3, 3]);
+        tensorGradCheck((x, w) => x.conv1d(w), input, weight);
+    });
+
+    test("conv1d backward - gradient check kernel_width=1", () => {
+        const input = Tensor.rand([1, 2, 4]);
+        const weight = Tensor.rand([3, 2, 1]);
+        tensorGradCheck((x, w) => x.conv1d(w), input, weight);
+    });
+
+    test("conv1d backward - gradient check kernel_width=width", () => {
+        const input = Tensor.rand([1, 1, 4]);
+        const weight = Tensor.rand([1, 1, 4]);
+        tensorGradCheck((x, w) => x.conv1d(w), input, weight);
+    });
+
+    test("conv1d backward - gradient check batch=3", () => {
+        const input = Tensor.rand([3, 2, 6]);
+        const weight = Tensor.rand([2, 2, 3]);
+        tensorGradCheck((x, w) => x.conv1d(w), input, weight);
+    });
+
+    test("conv1d chained with relu + sum", () => {
+        const input = Tensor.rand([2, 2, 5]);
+        const weight = Tensor.rand([3, 2, 3]);
+        tensorGradCheck(
+            (x, w) => x.conv1d(w).relu().sum(2),
+            input, weight,
+        );
+    });
+
+    test("conv1d chained with sigmoid", () => {
+        const input = Tensor.rand([1, 1, 4]);
+        const weight = Tensor.rand([1, 1, 2]);
+        tensorGradCheck(
+            (x, w) => x.conv1d(w).sigmoid(),
+            input, weight,
         );
     });
 });
