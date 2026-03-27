@@ -3,6 +3,7 @@ import { Context } from "./autodiff.js"
 import { fastTensorReduce } from "./fast_ops.js"
 import { Tensor } from "./tensor.js"
 import { TensorData } from "./tensor_data.js"
+import type { Storage } from "./tensor_data.js"
 import "./tensor_functions.js"
 
 // # List of functions in this file:
@@ -55,7 +56,6 @@ export function avgpool2d(input: Tensor, kernel: [number, number]): Tensor {
     const [batch, channel] = perm.shape as [number, number, number, number, number, number];
 
     const inputData = new TensorData(perm.data.storage, perm.shape);
-    const outputData = TensorData.zeros(perm.shape);
 
     const acc = (acc: number, x: number) => (acc + x);
     const reduceFn = fastTensorReduce((acc: number, x: number) => acc + x);
@@ -68,7 +68,20 @@ export function avgpool2d(input: Tensor, kernel: [number, number]): Tensor {
 
     // sum over kh
     const sumKh = TensorData.zeros([batch, channel, newHeight, newWidth, 1, 1])
-    reduceFn(sumKh.storage, sumKh.shape, sumKh.strides, inputData.storage, inputData.shape, inputData.strides, 4);
+    reduceFn(sumKh.storage, sumKh.shape, sumKh.strides, inputData.storage, inputData.shape, inputData.strides, 4);    
 
-    // return new Tensor(sumKh.data.storage);
+    if (!sumKh.storage) {
+        throw new Error("sumKh.storage is undefined");
+    }
+
+    // compute average
+    const SCALE = kh * kw;
+    for (let i = 0; i < sumKh.storage.length; ++i) {
+        sumKh.storage[i]! /= SCALE;
+    }
+
+    // now shape is: (batch, channel, newHeight, newWidth)
+    const outputData = new TensorData(sumKh.storage, [batch, channel, newHeight, newWidth]);
+
+    return new Tensor(outputData);
 }
