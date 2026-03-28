@@ -1,5 +1,5 @@
 import { describe, test, expect } from '@jest/globals';
-import { tile, avgpool2d, maxpool2d, softmax, logsoftmax } from './nn';
+import { tile, avgpool2d, maxpool2d, softmax, logsoftmax, dropout } from './nn';
 import { Tensor } from './tensor';
 
 function assertClose(actual: number, expected: number, tolerance = 1e-5) {
@@ -295,5 +295,52 @@ describe('logsoftmax', () => {
     for (let i = 0; i < 3; i++) {
       assertClose(sm.get([0, i]), lsm.get([0, i]));
     }
+  });
+});
+
+// ============================================================
+// dropout
+// ============================================================
+
+describe('dropout', () => {
+  test('rate=0 preserves all values', () => {
+    const t = Tensor.tensor([[1, 2, 3, 4]]);
+    const out = dropout(t, 0.0);
+    for (let i = 0; i < 4; i++) {
+      assertClose(out.get([0, i]), t.get([0, i]));
+    }
+  });
+
+  test('rate=1 zeros everything', () => {
+    const t = Tensor.tensor([[1, 2, 3, 4]]);
+    const out = dropout(t, 1.0);
+    for (let i = 0; i < 4; i++) {
+      assertClose(out.get([0, i]), 0);
+    }
+  });
+
+  test('ignore=true returns input unchanged regardless of rate', () => {
+    const t = Tensor.tensor([[1, 2, 3, 4]]);
+    const out = dropout(t, 1.0, true);
+    for (let i = 0; i < 4; i++) {
+      assertClose(out.get([0, i]), t.get([0, i]));
+    }
+  });
+
+  test('output values are either 0 or scaled by 1/(1-rate)', () => {
+    const t = Tensor.tensor([[5, 5, 5, 5, 5, 5, 5, 5, 5, 5]]);
+    const rate = 0.5;
+    const out = dropout(t, rate);
+    const scale = 1 / (1 - rate);
+    for (let i = 0; i < 10; i++) {
+      const v = out.get([0, i]);
+      expect(v === 0 || Math.abs(v - 5 * scale) < 1e-5).toBe(true);
+    }
+  });
+
+  test('preserves shape', () => {
+    const t = Tensor.rand([2, 3, 4]);
+    const out = dropout(t, 0.3);
+    expect(out.shape).toEqual([2, 3, 4]);
   });
 });

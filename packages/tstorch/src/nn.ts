@@ -61,3 +61,10 @@ export function logsoftmax(input: Tensor, dim: number): Tensor {
     const logSumExp = shifted.exp().sum(dim).log();
     return shifted.sub(logSumExp);
 }
+
+export function dropout(input: Tensor, rate: number = 0.5, ignore: boolean = false): Tensor {
+    if (ignore || rate === 0.0) return input;
+    if (rate >= 1.0) return Tensor.zeros(input.shape);
+    const mask = Tensor.rand(input.shape).gt(rate);
+    return input.mul(mask).mul(1 / (1 - rate));
+}
