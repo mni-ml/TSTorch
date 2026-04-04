@@ -389,9 +389,9 @@ export function Max(dim: number): typeof TensorFunction {
         }
         static backward(ctx: TensorContext, gradOutput: Tensor): Tensor[] {
             const [a, maxVals] = ctx.savedTensors;
-            // Gradient flows only to positions equal to the max (argmax mask)
-            const mask = a!.is_close(maxVals!);
-            return [gradOutput.mul(mask)];
+            const mask = new Tensor(eq(a!.data, maxVals!.data));
+            const maxCount = new Tensor(sum(mask.data, dim));
+            return [gradOutput.mul(mask).mul(maxCount.inv())];
         }
     };
 }
