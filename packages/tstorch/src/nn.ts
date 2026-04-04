@@ -39,6 +39,12 @@ export class Sigmoid extends Module {
     }
 }
 
+export class Tanh extends Module {
+    forward(input: Tensor): Tensor {
+        return input.mul(2).sigmoid().mul(2).sub(1);
+    }
+}
+
 // ============================================================
 // Loss functions
 // ============================================================

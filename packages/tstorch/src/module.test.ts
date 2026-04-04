@@ -3,7 +3,7 @@ import { Module, Parameter, BaseParameter } from './module.js';
 import { Tensor } from './tensor.js';
 import { Scalar } from './scalar.js';
 import { SGD } from './optimizer.js';
-import { Linear, ReLU, Sigmoid, mseLoss, crossEntropyLoss, softmax } from './nn.js';
+import { Linear, ReLU, Sigmoid, Tanh, mseLoss, crossEntropyLoss, softmax } from './nn.js';
 
 // ============================================================
 // Helper: a minimal Module subclass for testing
@@ -396,6 +396,69 @@ describe('Sigmoid module', () => {
     test('has no parameters', () => {
         const sig = new Sigmoid();
         expect(sig.parameters()).toHaveLength(0);
+    });
+});
+
+describe('Tanh module', () => {
+    test('tanh(0) = 0', () => {
+        const tanh = new Tanh();
+        const output = tanh.forward(Tensor.tensor([0]));
+        expect(output.get([0])).toBeCloseTo(0, 5);
+    });
+
+    test('output is bounded in [-1, 1]', () => {
+        const tanh = new Tanh();
+        const output = tanh.forward(Tensor.tensor([-100, -1, 0, 1, 100]));
+        for (let i = 0; i < 5; i++) {
+            expect(output.get([i])).toBeGreaterThanOrEqual(-1);
+            expect(output.get([i])).toBeLessThanOrEqual(1);
+        }
+    });
+
+    test('matches reference values', () => {
+        const tanh = new Tanh();
+        const output = tanh.forward(Tensor.tensor([-2, -1, 0, 1, 2]));
+        expect(output.get([0])).toBeCloseTo(Math.tanh(-2), 5);
+        expect(output.get([1])).toBeCloseTo(Math.tanh(-1), 5);
+        expect(output.get([2])).toBeCloseTo(Math.tanh(0), 5);
+        expect(output.get([3])).toBeCloseTo(Math.tanh(1), 5);
+        expect(output.get([4])).toBeCloseTo(Math.tanh(2), 5);
+    });
+
+    test('is an odd function: tanh(-x) = -tanh(x)', () => {
+        const tanh = new Tanh();
+        const x = Tensor.rand([10]);
+        const pos = tanh.forward(x);
+        const neg = tanh.forward(x.neg());
+        for (let i = 0; i < 10; i++) {
+            expect(neg.get([i])).toBeCloseTo(-pos.get([i]), 5);
+        }
+    });
+
+    test('has no parameters', () => {
+        const tanh = new Tanh();
+        expect(tanh.parameters()).toHaveLength(0);
+    });
+
+    test('gradient check', () => {
+        const tanh = new Tanh();
+        const input = Tensor.tensor([0.5, -0.3, 1.2, -0.8]);
+        const output = tanh.forward(input);
+        output.sum().backward();
+
+        const eps = 1e-5;
+        for (let i = 0; i < 4; i++) {
+            const orig = input.get([i]);
+            input.set([i], orig + eps);
+            const plus = tanh.forward(input).sum().item();
+            input.set([i], orig - eps);
+            const minus = tanh.forward(input).sum().item();
+            input.set([i], orig);
+
+            const numerical = (plus - minus) / (2 * eps);
+            const analytical = input.grad!.get([i]);
+            expect(analytical).toBeCloseTo(numerical, 4);
+        }
     });
 });
 
