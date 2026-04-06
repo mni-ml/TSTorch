@@ -46,18 +46,19 @@ export class SGD extends Optimizer {
             }
 
             if (p.value instanceof Tensor) {
-                const grad = p.value.grad;
-                if (grad) {
-                    // Raw storage arithmetic to create a new leaf tensor (no history).
-                    // Using tensor ops would create computation history that pollutes
-                    // the next epoch's backward pass.
-                    const valStorage = p.value.data.storage;
+                const rawGrad = p.value.grad;
+                if (rawGrad) {
+                    // Ensure contiguous layout before raw storage access —
+                    // gradients from permute backward etc. may have non-trivial strides.
+                    const grad = rawGrad.contiguous();
+                    const val = p.value.contiguous();
+                    const valStorage = val.data.storage;
                     const gradStorage = grad.data.storage;
-                    const newStorage = new Float64Array(p.value.size);
-                    for (let i = 0; i < p.value.size; i++) {
+                    const newStorage = new Float64Array(val.size);
+                    for (let i = 0; i < val.size; i++) {
                         newStorage[i] = valStorage[i]! - this.lr * gradStorage[i]!;
                     }
-                    p.update(new Tensor(new TensorData(newStorage, [...p.value.shape])) as any);
+                    p.update(new Tensor(new TensorData(newStorage, [...val.shape])) as any);
                 }
             } else if (p.value instanceof Scalar) {
                 const grad = p.value.derivative ?? 0;

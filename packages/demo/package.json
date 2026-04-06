@@ -3,12 +3,15 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "tstorch": "workspace:*"
+    "@mni-ml/framework": "workspace:*"
   },  
   "scripts": {
     "build": "tsc -b .",
     "start": "pnpm build && node dist/index.js",
     "start:tensor": "pnpm build && node dist/index.js tensor",
-    "start:scalar": "pnpm build && node dist/index.js scalar"
+    "start:scalar": "pnpm build && node dist/index.js scalar",
+    "start:fast": "pnpm build && node dist/index.js fast",
+    "start:mnist": "pnpm build && node dist/index.js mnist",
+    "start:sentiment": "pnpm build && node dist/index.js sentiment"
   }
 }

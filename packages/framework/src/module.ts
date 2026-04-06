@@ -78,7 +78,7 @@ export class Module<P extends BaseParameter = BaseParameter> {
 
     eval(): void {
         this.training = false;
-        for (const module of this.modules()) {
+        for (const module of this.children()) {
             module.eval();
         }
     }
