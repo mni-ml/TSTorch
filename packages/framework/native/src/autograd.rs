@@ -141,13 +141,7 @@ impl Tape {
                             store.accumulate_grad(*inp_id, ig);
                         }
                         if let Some(&existing) = grads.get(inp_id) {
-                            // Accumulate into existing gradient tensor
-                            let size = store.size(existing);
-                            let src = store.data(ig).to_vec();
-                            let dst = store.data_mut(existing);
-                            for i in 0..size {
-                                dst[i] += src[i];
-                            }
+                            store.add_inplace(existing, ig);
                         } else {
                             grads.insert(*inp_id, ig);
                         }

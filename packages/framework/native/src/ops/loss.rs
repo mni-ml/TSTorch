@@ -2,8 +2,25 @@ use smallvec::smallvec;
 use crate::autograd::{BackwardOp, SavedContext, Tape, TapeEntry};
 use crate::tensor::{TensorId, TensorStore, shape_size};
 
-/// Fused cross-entropy: softmax(logits) then -log(prob[target]), averaged.
-/// logits: [B*T, V], targets: flat array of length B*T with class indices.
+#[cfg(feature = "cuda")]
+use crate::device::GpuDevice;
+#[cfg(feature = "cuda")]
+use cudarc::driver::{DevicePtr, LaunchConfig};
+
+#[cfg(feature = "cuda")]
+fn launch_cfg(n: u32) -> LaunchConfig {
+    LaunchConfig {
+        grid_dim: ((n + 255) / 256, 1, 1),
+        block_dim: (256, 1, 1),
+        shared_mem_bytes: 0,
+    }
+}
+
+// =========================================================================
+// Forward
+// =========================================================================
+
+#[cfg(feature = "cpu")]
 pub fn cross_entropy(
     logits: TensorId, targets: &[usize],
     store: &mut TensorStore, tape: &mut Tape,
@@ -14,7 +31,6 @@ pub fn cross_entropy(
     let n = shape_size(&shape) / v;
     let data = store.to_host(logits);
 
-    // Compute softmax and NLL in one pass
     let mut softmax_buf = vec![0.0f32; n * v];
     let mut loss_sum = 0.0f32;
 
@@ -39,8 +55,6 @@ pub fn cross_entropy(
 
     let loss = loss_sum / n as f32;
     let loss_id = store.from_vec(vec![loss], &[1]);
-
-    // Save softmax output for backward
     let sm_id = store.from_vec(softmax_buf, &shape);
 
     tape.record(TapeEntry {
@@ -51,6 +65,58 @@ pub fn cross_entropy(
     loss_id
 }
 
+#[cfg(feature = "cuda")]
+pub fn cross_entropy(
+    logits: TensorId, targets: &[usize],
+    store: &mut TensorStore, tape: &mut Tape,
+) -> TensorId {
+    let shape = store.shape(logits).to_vec();
+    let ndim = shape.len();
+    let v = shape[ndim - 1];
+    let n = shape_size(&shape) / v;
+
+    let dev = GpuDevice::instance();
+    let logits_ptr = store.dev_ptr(logits);
+
+    let targets_i32: Vec<i32> = targets.iter().map(|&t| t as i32).collect();
+    let targets_gpu = dev.stream.clone_htod(&targets_i32).unwrap();
+    let targets_ptr = *targets_gpu.device_ptr();
+
+    let losses_id = store.zeros(&[n]);
+    let losses_ptr = store.dev_ptr(losses_id);
+    let sm_id = store.zeros(&shape);
+    let sm_ptr = store.dev_ptr(sm_id);
+
+    let func = dev.get_func("cross_entropy_forward_f32");
+    unsafe {
+        dev.stream.launch_builder(func)
+            .arg(&losses_ptr)
+            .arg(&sm_ptr)
+            .arg(&logits_ptr)
+            .arg(&targets_ptr)
+            .arg(&(n as i32))
+            .arg(&(v as i32))
+            .launch(launch_cfg(n as u32))
+            .unwrap();
+    }
+
+    let losses_host = store.to_host(losses_id);
+    let loss = losses_host.iter().sum::<f32>() / n as f32;
+    let loss_id = store.from_vec(vec![loss], &[1]);
+
+    tape.record(TapeEntry {
+        op: BackwardOp::CrossEntropy, output_id: loss_id,
+        input_ids: smallvec![logits],
+        saved: SavedContext::Indices(targets.to_vec(), n, v, sm_id),
+    });
+    loss_id
+}
+
+// =========================================================================
+// Backward
+// =========================================================================
+
+#[cfg(feature = "cpu")]
 pub fn cross_entropy_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorStore) -> Vec<Option<TensorId>> {
     if let SavedContext::Indices(targets, n, v, sm_id) = saved {
         let grad_val = store.get_scalar(grad);
@@ -67,5 +133,39 @@ pub fn cross_entropy_backward(grad: TensorId, saved: &SavedContext, store: &mut 
             }
         }
         vec![Some(store.from_vec(dlogits, &shape))]
+    } else { vec![None] }
+}
+
+#[cfg(feature = "cuda")]
+pub fn cross_entropy_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorStore) -> Vec<Option<TensorId>> {
+    if let SavedContext::Indices(targets, n, v, sm_id) = saved {
+        let dev = GpuDevice::instance();
+        let grad_val = store.get_scalar(grad);
+        let grad_scale = grad_val / *n as f32;
+        let shape = store.shape(*sm_id).to_vec();
+
+        let sm_ptr = store.dev_ptr(*sm_id);
+
+        let targets_i32: Vec<i32> = targets.iter().map(|&t| t as i32).collect();
+        let targets_gpu = dev.stream.clone_htod(&targets_i32).unwrap();
+        let targets_ptr = *targets_gpu.device_ptr();
+
+        let dlogits_id = store.zeros(&shape);
+        let dlogits_ptr = store.dev_ptr(dlogits_id);
+
+        let func = dev.get_func("cross_entropy_backward_f32");
+        unsafe {
+            dev.stream.launch_builder(func)
+                .arg(&dlogits_ptr)
+                .arg(&sm_ptr)
+                .arg(&targets_ptr)
+                .arg(&grad_scale)
+                .arg(&(*n as i32))
+                .arg(&(*v as i32))
+                .launch(launch_cfg(*n as u32))
+                .unwrap();
+        }
+
+        vec![Some(dlogits_id)]
     } else { vec![None] }
 }

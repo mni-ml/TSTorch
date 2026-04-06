@@ -14,7 +14,7 @@ cuda = ["dep:cudarc"]
 [dependencies]
 napi = { version = "2", features = ["napi8"] }
 napi-derive = "2"
-cudarc = { version = "0.16", features = ["cublas", "nvrtc", "curand"], optional = true }
+cudarc = { version = "0.16", features = ["cublas", "nvrtc", "curand", "cuda-version-from-build-system"], optional = true }
 rand = "0.8"
 rand_distr = "0.4"
 parking_lot = "0.12"

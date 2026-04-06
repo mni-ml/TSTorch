@@ -2,8 +2,18 @@ use smallvec::smallvec;
 use crate::autograd::{BackwardOp, SavedContext, Tape, TapeEntry};
 use crate::tensor::{TensorId, TensorStore, shape_size};
 
+#[cfg(feature = "cuda")]
+use crate::device::GpuDevice;
+#[cfg(feature = "cuda")]
+use cudarc::cublas::{GemmConfig, StridedBatchedConfig};
+#[cfg(feature = "cuda")]
+use cudarc::cublas::safe::Gemm;
+#[cfg(feature = "cuda")]
+use cudarc::cublas::sys::cublasOperation_t;
+
 /// CPU matmul supporting batched dimensions.
 /// A: [..., M, K], B: [..., K, N] → C: [..., M, N]
+#[cfg(feature = "cpu")]
 pub fn matmul(a: TensorId, b: TensorId, store: &mut TensorStore, tape: &mut Tape) -> TensorId {
     let a_id = store.ensure_contiguous(a);
     let b_id = store.ensure_contiguous(b);
@@ -47,7 +57,6 @@ pub fn matmul(a: TensorId, b: TensorId, store: &mut TensorStore, tape: &mut Tape
         let b_off = b_batch_idx * b_mat;
         let c_off = batch * c_mat;
 
-        // ikj loop order for cache efficiency
         for i in 0..m {
             for kk in 0..k {
                 let a_val = a_data[a_off + i * k + kk];
@@ -59,6 +68,125 @@ pub fn matmul(a: TensorId, b: TensorId, store: &mut TensorStore, tape: &mut Tape
     }
 
     let out_id = store.from_vec(out, &out_shape);
+    tape.record(TapeEntry {
+        op: BackwardOp::MatMul, output_id: out_id, input_ids: smallvec![a, b],
+        saved: SavedContext::Tensors(smallvec![a, b]),
+    });
+    out_id
+}
+
+/// CUDA matmul using cuBLAS gemm / gemm_strided_batched.
+/// A: [..., M, K], B: [..., K, N] → C: [..., M, N]
+#[cfg(feature = "cuda")]
+pub fn matmul(a: TensorId, b: TensorId, store: &mut TensorStore, tape: &mut Tape) -> TensorId {
+    let a_id = store.ensure_contiguous(a);
+    let b_id = store.ensure_contiguous(b);
+    let a_shape = store.shape(a_id).to_vec();
+    let b_shape = store.shape(b_id).to_vec();
+
+    assert!(a_shape.len() >= 2 && b_shape.len() >= 2, "matmul requires at least 2D tensors");
+    let m = a_shape[a_shape.len() - 2];
+    let k = a_shape[a_shape.len() - 1];
+    let k2 = b_shape[b_shape.len() - 2];
+    let n = b_shape[b_shape.len() - 1];
+    assert_eq!(k, k2, "matmul inner dimensions must match: {} vs {}", k, k2);
+
+    let a_batch: Vec<usize> = a_shape[..a_shape.len()-2].to_vec();
+    let b_batch: Vec<usize> = b_shape[..b_shape.len()-2].to_vec();
+    let out_batch = crate::utils::broadcast_shape(&a_batch, &b_batch);
+    let batch_size = shape_size(&out_batch);
+
+    let mut out_shape = out_batch.clone();
+    out_shape.push(m);
+    out_shape.push(n);
+
+    let a_batch_size = shape_size(&a_batch);
+    let b_batch_size = shape_size(&b_batch);
+
+    // cuBLAS strided-batched supports stride=0 for broadcasting when one
+    // operand has batch_size=1. For rarer multi-dim broadcast patterns,
+    // fall back to host-side computation.
+    let simple_broadcast = (a_batch_size == batch_size || a_batch_size == 1)
+        && (b_batch_size == batch_size || b_batch_size == 1);
+
+    if !simple_broadcast {
+        let a_data = store.to_host(a_id);
+        let b_data = store.to_host(b_id);
+        let out_size = shape_size(&out_shape);
+        let mut out = vec![0.0f32; out_size];
+        let a_mat = m * k;
+        let b_mat = k * n;
+        let c_mat = m * n;
+        for batch in 0..batch_size {
+            let a_bi = if a_batch_size == 1 { 0 } else { batch % a_batch_size };
+            let b_bi = if b_batch_size == 1 { 0 } else { batch % b_batch_size };
+            let a_off = a_bi * a_mat;
+            let b_off = b_bi * b_mat;
+            let c_off = batch * c_mat;
+            for i in 0..m {
+                for kk in 0..k {
+                    let a_val = a_data[a_off + i * k + kk];
+                    for j in 0..n {
+                        out[c_off + i * n + j] += a_val * b_data[b_off + kk * n + j];
+                    }
+                }
+            }
+        }
+        let out_id = store.from_vec(out, &out_shape);
+        tape.record(TapeEntry {
+            op: BackwardOp::MatMul, output_id: out_id, input_ids: smallvec![a, b],
+            saved: SavedContext::Tensors(smallvec![a, b]),
+        });
+        return out_id;
+    }
+
+    let out_id = store.zeros(&out_shape);
+    let dev = GpuDevice::instance();
+
+    // cuBLAS is column-major. For row-major C = A @ B where A:[M,K], B:[K,N]:
+    // pass B as first arg, A as second, with m=N, n=M, k=K.
+    let cfg = GemmConfig {
+        transa: cublasOperation_t::CUBLAS_OP_N,
+        transb: cublasOperation_t::CUBLAS_OP_N,
+        m: n as i32,
+        n: m as i32,
+        k: k as i32,
+        alpha: 1.0f32,
+        lda: n as i32,
+        ldb: k as i32,
+        beta: 0.0f32,
+        ldc: n as i32,
+    };
+
+    // Use raw pointer arithmetic to obtain non-overlapping references to
+    // distinct tensor slots, satisfying the borrow checker.
+    let tensors_ptr = store.tensors.as_mut_ptr();
+
+    if batch_size <= 1 {
+        unsafe {
+            let b_data = &(*tensors_ptr.add(b_id)).as_ref().unwrap().data;
+            let a_data = &(*tensors_ptr.add(a_id)).as_ref().unwrap().data;
+            let c_data = &mut (*tensors_ptr.add(out_id)).as_mut().unwrap().data;
+            dev.blas.gemm(cfg, b_data, a_data, c_data).unwrap();
+        }
+    } else {
+        let stride_a = if b_batch_size == 1 { 0 } else { (k * n) as i64 };
+        let stride_b = if a_batch_size == 1 { 0 } else { (m * k) as i64 };
+        let batched_cfg = StridedBatchedConfig {
+            gemm: cfg,
+            batch_size: batch_size as i32,
+            stride_a,
+            stride_b,
+            stride_c: (m * n) as i64,
+        };
+        unsafe {
+            let b_data = &(*tensors_ptr.add(b_id)).as_ref().unwrap().data;
+            let a_data = &(*tensors_ptr.add(a_id)).as_ref().unwrap().data;
+            let c_data = &mut (*tensors_ptr.add(out_id)).as_mut().unwrap().data;
+            dev.blas.gemm_strided_batched(batched_cfg, b_data, a_data, c_data).unwrap();
+        }
+    }
+
     tape.record(TapeEntry {
         op: BackwardOp::MatMul, output_id: out_id, input_ids: smallvec![a, b],
         saved: SavedContext::Tensors(smallvec![a, b]),
@@ -92,6 +220,8 @@ pub fn matmul_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorS
     } else { vec![None, None] }
 }
 
+/// Transpose the last two dimensions. Works on both CPU and CUDA via the
+/// polymorphic `to_host` / `from_vec` methods on `TensorStore`.
 fn transpose_last2(a: TensorId, store: &mut TensorStore) -> TensorId {
     let shape = store.shape(a).to_vec();
     let ndim = shape.len();

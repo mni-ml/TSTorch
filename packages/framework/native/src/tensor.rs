@@ -279,6 +279,16 @@ impl TensorStore {
         }
     }
 
+    /// In-place addition: dst[i] += src[i]
+    pub fn add_inplace(&mut self, dst: TensorId, src: TensorId) {
+        let size = self.get(src).size;
+        let src_data = self.get(src).data.clone();
+        let dst_data = self.data_mut(dst);
+        for i in 0..size {
+            dst_data[i] += src_data[i];
+        }
+    }
+
     fn make_contiguous_data(&self, id: TensorId) -> Vec<f32> {
         let t = self.get(id);
         let size = t.size;
@@ -477,11 +487,28 @@ impl TensorStore {
         }
     }
 
+    /// In-place addition on GPU: dst[i] += src[i]
+    pub fn add_inplace(&mut self, dst: TensorId, src: TensorId) {
+        let size = self.get(src).size;
+        let dev = crate::device::GpuDevice::instance();
+        let src_ptr = *self.get(src).data.device_ptr();
+        let dst_ptr = *self.get(dst).data.device_ptr();
+        let func = dev.get_func("add_f32");
+        unsafe {
+            dev.stream.launch_builder(func)
+                .arg(&dst_ptr)
+                .arg(&dst_ptr)
+                .arg(&src_ptr)
+                .arg(&(size as i32))
+                .launch(launch_cfg(size as u32))
+                .unwrap();
+        }
+    }
+
     pub fn ensure_contiguous(&mut self, id: TensorId) -> TensorId {
         if self.get(id).is_contiguous() {
             return id;
         }
-        // CPU fallback: copy to host, rearrange, copy back
         let data = self.to_host(id);
         let shape = self.get(id).shape.clone();
         self.from_vec(data, &shape)
