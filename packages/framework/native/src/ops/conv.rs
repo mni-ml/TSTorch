@@ -54,7 +54,7 @@ pub fn conv1d_forward(
     tape.record(TapeEntry {
         op: BackwardOp::Conv1d, output_id: out,
         input_ids: smallvec![input, weight],
-        saved: SavedContext::Tensors(smallvec![input, weight]),
+        saved: SavedContext::TensorsAndShape(smallvec![input, weight], vec![stride, padding]),
     });
     out
 }
@@ -85,7 +85,7 @@ pub fn conv1d_forward(
     tape.record(TapeEntry {
         op: BackwardOp::Conv1d, output_id: out,
         input_ids: smallvec![input, weight],
-        saved: SavedContext::Tensors(smallvec![input, weight]),
+        saved: SavedContext::TensorsAndShape(smallvec![input, weight], vec![stride, padding]),
     });
     out
 }
@@ -96,17 +96,15 @@ pub fn conv1d_forward(
 
 #[cfg(any(feature = "cpu", feature = "webgpu"))]
 pub fn conv1d_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorStore) -> Vec<Option<TensorId>> {
-    if let SavedContext::Tensors(ids) = saved {
+    if let SavedContext::TensorsAndShape(ids, params) = saved {
         let input = ids[0]; let weight = ids[1];
+        let stride = params[0]; let padding = params[1];
         let inp_shape = store.shape(input).to_vec();
         let w_shape = store.shape(weight).to_vec();
         let grad_shape = store.shape(grad).to_vec();
         let (n, c_in, l) = (inp_shape[0], inp_shape[1], inp_shape[2]);
         let (c_out, _, k) = (w_shape[0], w_shape[1], w_shape[2]);
         let l_out = grad_shape[2];
-        let stride = (l - 1).max(1) / l_out.max(1);
-        let stride = if stride == 0 { 1 } else { stride };
-        let padding = ((l_out - 1) * stride + k - l) / 2;
 
         let inp_data = store.to_host(input);
         let w_data = store.to_host(weight);
@@ -141,16 +139,15 @@ pub fn conv1d_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorS
 
 #[cfg(feature = "cuda")]
 pub fn conv1d_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorStore) -> Vec<Option<TensorId>> {
-    if let SavedContext::Tensors(ids) = saved {
+    if let SavedContext::TensorsAndShape(ids, params) = saved {
         let input = ids[0]; let weight = ids[1];
+        let stride = params[0]; let padding = params[1];
         let inp_shape = store.shape(input).to_vec();
         let w_shape = store.shape(weight).to_vec();
         let grad_shape = store.shape(grad).to_vec();
         let (n, c_in, l) = (inp_shape[0], inp_shape[1], inp_shape[2]);
         let (c_out, _, k) = (w_shape[0], w_shape[1], w_shape[2]);
         let l_out = grad_shape[2];
-        let stride = ((l + 2 * 0 - k) / (l_out.max(1) - 1).max(1)).max(1);
-        let padding = ((l_out - 1) * stride + k - l) / 2;
 
         let dinp = store.zeros(&inp_shape);
         let dw = store.zeros(&w_shape);
@@ -221,7 +218,7 @@ pub fn conv2d_forward(
     tape.record(TapeEntry {
         op: BackwardOp::Conv2d, output_id: out,
         input_ids: smallvec![input, weight],
-        saved: SavedContext::Tensors(smallvec![input, weight]),
+        saved: SavedContext::TensorsAndShape(smallvec![input, weight], vec![stride, padding]),
     });
     out
 }
@@ -253,7 +250,7 @@ pub fn conv2d_forward(
     tape.record(TapeEntry {
         op: BackwardOp::Conv2d, output_id: out,
         input_ids: smallvec![input, weight],
-        saved: SavedContext::Tensors(smallvec![input, weight]),
+        saved: SavedContext::TensorsAndShape(smallvec![input, weight], vec![stride, padding]),
     });
     out
 }
@@ -264,15 +261,15 @@ pub fn conv2d_forward(
 
 #[cfg(any(feature = "cpu", feature = "webgpu"))]
 pub fn conv2d_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorStore) -> Vec<Option<TensorId>> {
-    if let SavedContext::Tensors(ids) = saved {
+    if let SavedContext::TensorsAndShape(ids, params) = saved {
         let input = ids[0]; let weight = ids[1];
+        let stride = params[0]; let padding = params[1];
         let inp_shape = store.shape(input).to_vec();
         let w_shape = store.shape(weight).to_vec();
         let grad_shape = store.shape(grad).to_vec();
         let (n, c_in, h, w) = (inp_shape[0], inp_shape[1], inp_shape[2], inp_shape[3]);
         let (c_out, _, kh, kw) = (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
         let (h_out, w_out) = (grad_shape[2], grad_shape[3]);
-        let stride = 1; let padding = 0;
 
         let inp_data = store.to_host(input);
         let w_data = store.to_host(weight);
@@ -314,15 +311,15 @@ pub fn conv2d_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorS
 
 #[cfg(feature = "cuda")]
 pub fn conv2d_backward(grad: TensorId, saved: &SavedContext, store: &mut TensorStore) -> Vec<Option<TensorId>> {
-    if let SavedContext::Tensors(ids) = saved {
+    if let SavedContext::TensorsAndShape(ids, params) = saved {
         let input = ids[0]; let weight = ids[1];
+        let stride = params[0]; let padding = params[1];
         let inp_shape = store.shape(input).to_vec();
         let w_shape = store.shape(weight).to_vec();
         let grad_shape = store.shape(grad).to_vec();
         let (n, c_in, h, w) = (inp_shape[0], inp_shape[1], inp_shape[2], inp_shape[3]);
         let (c_out, _, kh, kw) = (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
         let (h_out, w_out) = (grad_shape[2], grad_shape[3]);
-        let stride = 1; let padding = 0;
 
         let dinp = store.zeros(&inp_shape);
         let dw = store.zeros(&w_shape);
