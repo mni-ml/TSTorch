@@ -5,12 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname_f = dirname(fileURLToPath(import.meta.url));
 
-const PLATFORM_PACKAGES: Record<string, string> = {
-    'darwin-arm64':    '@mni-ml/framework-darwin-arm64',
-    'darwin-x64':      '@mni-ml/framework-darwin-x64',
-    'linux-x64':       '@mni-ml/framework-linux-x64-gnu',
-    'linux-arm64':     '@mni-ml/framework-linux-arm64-gnu',
-    'win32-x64':       '@mni-ml/framework-win32-x64-msvc',
+const PLATFORM_PACKAGES: Record<string, string[]> = {
+    'darwin-arm64':  ['@mni-ml/framework-darwin-arm64'],
+    'darwin-x64':    ['@mni-ml/framework-darwin-x64'],
+    'linux-x64':     ['@mni-ml/framework-linux-x64-gnu-cuda', '@mni-ml/framework-linux-x64-gnu'],
+    'linux-arm64':   ['@mni-ml/framework-linux-arm64-gnu'],
+    'win32-x64':     ['@mni-ml/framework-win32-x64-msvc'],
 };
 
 function loadNative() {
@@ -19,34 +19,35 @@ function loadNative() {
     const arch = process.arch;
     const key = `${platform}-${arch}`;
 
-    // 1. Try the prebuilt platform package (installed via optionalDependencies)
-    const pkgName = PLATFORM_PACKAGES[key];
-    if (pkgName) {
+    // 1. Try prebuilt platform packages (CUDA first on Linux, then CPU fallback)
+    const candidates_pkg = PLATFORM_PACKAGES[key] ?? [];
+    for (const pkgName of candidates_pkg) {
         try { return require(pkgName); } catch {}
     }
 
     // 2. Fall back to a local .node file (dev builds / build-from-source)
-    const suffixMap: Record<string, string> = {
-        'darwin-arm64': 'darwin-arm64',
-        'darwin-x64':   'darwin-x64',
-        'linux-x64':    'linux-x64-gnu',
-        'linux-arm64':  'linux-arm64-gnu',
-        'win32-x64':    'win32-x64-msvc',
+    const suffixMap: Record<string, string[]> = {
+        'darwin-arm64': ['darwin-arm64'],
+        'darwin-x64':   ['darwin-x64'],
+        'linux-x64':    ['linux-x64-gnu-cuda', 'linux-x64-gnu'],
+        'linux-arm64':  ['linux-arm64-gnu'],
+        'win32-x64':    ['win32-x64-msvc'],
     };
-    const suffix = suffixMap[key] ?? key;
+    const suffixes = suffixMap[key] ?? [key];
     const ext = platform === 'win32' ? 'dll' : platform === 'darwin' ? 'dylib' : 'so';
-    const candidates = [
-        join(__dirname_f, '..', 'native', `mni-framework-native.${suffix}.node`),
-        join(__dirname_f, '..', 'native', 'target', 'release', `libmni_framework_native.${ext}`),
-    ];
-    for (const p of candidates) {
+    const candidates_file: string[] = [];
+    for (const suffix of suffixes) {
+        candidates_file.push(join(__dirname_f, '..', 'native', `mni-framework-native.${suffix}.node`));
+    }
+    candidates_file.push(join(__dirname_f, '..', 'native', 'target', 'release', `libmni_framework_native.${ext}`));
+    for (const p of candidates_file) {
         if (existsSync(p)) {
             return require(p);
         }
     }
 
-    const hint = pkgName
-        ? `\n  Install prebuilt: npm install ${pkgName}\n  Or build from source: cd native && cargo build --release`
+    const hint = candidates_pkg.length > 0
+        ? `\n  Install prebuilt: npm install ${candidates_pkg[candidates_pkg.length - 1]}\n  For CUDA: npm install ${candidates_pkg[0]}\n  Or build from source: cd native && cargo build --release`
         : `\n  Build from source: cd native && cargo build --release`;
     throw new Error(
         `@mni-ml/framework: native addon not found for ${platform}-${arch}.${hint}`

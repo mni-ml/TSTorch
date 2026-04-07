@@ -40,6 +40,7 @@
     "@mni-ml/framework-darwin-arm64": "0.2.0",
     "@mni-ml/framework-darwin-x64": "0.2.0",
     "@mni-ml/framework-linux-x64-gnu": "0.2.0",
+    "@mni-ml/framework-linux-x64-gnu-cuda": "0.2.0",
     "@mni-ml/framework-linux-arm64-gnu": "0.2.0",
     "@mni-ml/framework-win32-x64-msvc": "0.2.0"
   },

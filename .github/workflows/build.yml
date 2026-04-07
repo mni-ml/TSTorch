@@ -111,6 +111,40 @@ jobs:
           path: packages/framework/npm/${{ matrix.suffix }}/mni-framework-native.*.node
           if-no-files-found: error
 
+  build-cuda:
+    runs-on: ubuntu-latest
+    name: Build linux-x64-gnu-cuda
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Build CUDA native addon
+        working-directory: packages/framework/native
+        run: |
+          /root/.cargo/bin/cargo build --release --no-default-features --features cuda
+
+      - name: Copy binary
+        working-directory: packages/framework
+        run: |
+          cp native/target/release/libmni_framework_native.so npm/linux-x64-gnu-cuda/mni-framework-native.linux-x64-gnu-cuda.node
+          ls -lh npm/linux-x64-gnu-cuda/mni-framework-native.linux-x64-gnu-cuda.node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x64-gnu-cuda
+          path: packages/framework/npm/linux-x64-gnu-cuda/mni-framework-native.*.node
+          if-no-files-found: error
+
   test:
     needs: build
     if: ${{ !cancelled() }}
@@ -153,7 +187,6 @@ jobs:
       - name: Install dependencies and build TypeScript
         shell: bash
         run: |
-          # Move root package.json to avoid npm workspace resolution
           mv package.json _package.json.bak
           cd packages/framework
           npm install
