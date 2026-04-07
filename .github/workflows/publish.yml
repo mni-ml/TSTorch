@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
             suffix: darwin-x64
             lib_ext: dylib
             feature: cpu
@@ -109,10 +109,13 @@ jobs:
         include:
           - os: macos-14
             suffix: darwin-arm64
+            artifact: native-darwin-arm64
           - os: ubuntu-latest
             suffix: linux-x64-gnu
+            artifact: native-linux-x64-gnu
           - os: windows-latest
             suffix: win32-x64-msvc
+            artifact: native-win32-x64-msvc
 
     runs-on: ${{ matrix.os }}
     name: Test ${{ matrix.suffix }}
@@ -128,7 +131,7 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v4
         with:
-          name: native-${{ matrix.suffix }}
+          name: ${{ matrix.artifact }}
           path: packages/framework/native/
 
       - name: Build TypeScript
