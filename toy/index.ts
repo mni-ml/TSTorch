@@ -22,5 +22,6 @@ export { gpuTensorMap, gpuTensorZip, gpuTensorReduce, _sumPractice } from "./gpu
 export { getDevice, destroyDevice } from "./gpu_backend.js";
 export { WORKGROUP_SIZE } from "./gpu_kernels.js";
 
+export * from "./nn.js"
 export * from "./datasets.js"
 export * from "./module.js"
