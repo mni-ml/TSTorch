@@ -2,9 +2,9 @@ name: Build native binaries
 
 on:
   push:
-    branches: [main, generalizing]
+    branches: [main, staging]
   pull_request:
-    branches: [main, generalizing]
+    branches: [main, staging]
 
 permissions:
   contents: read
