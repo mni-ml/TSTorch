@@ -215,7 +215,9 @@ export class Tensor {
 
     transpose(dim0: number = 0, dim1: number = 1): Tensor {
         const order = [...Array(this.dims).keys()];
-        [order[dim0]!, order[dim1]!] = [order[dim1]!, order[dim0]!];
+        const tmp = order[dim0]!;
+        order[dim0] = order[dim1]!;
+        order[dim1] = tmp;
         return this.permute(...order);
     }
 
