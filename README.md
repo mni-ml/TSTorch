@@ -17,23 +17,15 @@ A TypeScript ML framework with Rust native backends (CPU, CUDA, WebGPU) providin
 npm install @mni-ml/framework
 ```
 
-### Building the native backend
+Prebuilt native binaries are installed automatically for your platform. The loader picks the best available backend: **CUDA > WebGPU > CPU**.
 
-The framework ships a Rust N-API backend. Choose a backend based on your hardware:
-
-```bash
-# CPU only (default, works everywhere)
-cd native && cargo build --release --features cpu
-cp target/release/libmni_framework_native.dylib mni-framework-native.darwin-arm64.node
-
-# NVIDIA CUDA
-cd native && cargo build --release --no-default-features --features cuda
-cp target/release/libmni_framework_native.so mni-framework-native.linux-x64-gnu.node
-
-# WebGPU (Metal on macOS, Vulkan on Linux/Windows)
-cd native && cargo build --release --no-default-features --features webgpu
-cp target/release/libmni_framework_native.dylib mni-framework-native.darwin-arm64.node
-```
+| Platform | CPU | CUDA | WebGPU |
+|----------|-----|------|--------|
+| macOS Apple Silicon | yes | — | yes (Metal) |
+| macOS Intel | yes | — | yes (Metal) |
+| Linux x64 | yes | yes | yes (Vulkan) |
+| Linux ARM64 | yes | — | — |
+| Windows x64 | yes | yes | yes (DX12) |
 
 ## Quick Start
 
@@ -175,6 +167,24 @@ All three backends share the same autograd tape and tensor store. Feature flags 
 - `cpu` -- default, no GPU required
 - `cuda` -- NVIDIA GPU via CUDA
 - `webgpu` -- any GPU via wgpu (Metal, Vulkan, DX12)
+
+## Building from source
+
+Only needed if you are contributing or want a custom build. Requires [Rust](https://rustup.rs/).
+
+```bash
+# CPU (default)
+npm run build:native
+
+# CUDA (requires CUDA toolkit)
+npm run build:native:cuda
+
+# WebGPU
+npm run build:native:webgpu
+
+# Build TypeScript
+npm run build
+```
 
 ## License
 
