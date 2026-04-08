@@ -2,6 +2,7 @@ import { Tensor } from '../toy/tensor.ts';
 import { TensorHistory } from '../toy/tensor_functions.ts';
 import { SGD } from '../toy/optimizer.ts';
 import { Parameter } from '../toy/module.ts';
+import { Linear, RMSNorm, softmax, mseLoss, tanh } from '../toy/nn.ts';
 
 let passed = 0;
 let failed = 0;
@@ -316,6 +317,178 @@ section('SGD with Tensor parameters');
     // zeroGrad should clear
     opt.zeroGrad();
     assert(param.value.grad === null, 'SGD zeroGrad clears tensor grad');
+}
+
+// ============================================================
+// negative dim in sum/mean
+// ============================================================
+
+section('negative dim');
+
+{
+    const x = Tensor.tensor([[1, 2, 3], [4, 5, 6]]);
+    const s = x.sum(-1); // sum along last dim
+    assert(s.shape[0] === 2 && s.shape[1] === 1, 'sum(-1) shape');
+    assertClose(s.get([0, 0]), 6, 1e-6, 'sum(-1) row 0');
+    assertClose(s.get([1, 0]), 15, 1e-6, 'sum(-1) row 1');
+
+    const m = x.mean(-1);
+    assertClose(m.get([0, 0]), 2, 1e-6, 'mean(-1) row 0');
+    assertClose(m.get([1, 0]), 5, 1e-6, 'mean(-1) row 1');
+}
+
+// ============================================================
+// Tensor.randn
+// ============================================================
+
+section('Tensor.randn');
+
+{
+    const r = Tensor.randn([100]);
+    assert(r.shape[0] === 100, 'randn shape');
+    // Check rough statistics: mean should be near 0
+    const mean = r.sum().item() / 100;
+    assert(Math.abs(mean) < 1.0, 'randn mean roughly 0');
+}
+
+// ============================================================
+// Tensor.parameter
+// ============================================================
+
+section('Tensor.parameter');
+
+{
+    const p = Tensor.parameter([3, 4]);
+    assert(p.shape[0] === 3 && p.shape[1] === 4, 'parameter shape');
+    assert(p.requiresGrad(), 'parameter requires grad');
+    assert(p.isLeaf(), 'parameter is leaf');
+}
+
+// ============================================================
+// Linear
+// ============================================================
+
+section('Linear');
+
+{
+    const linear = new Linear(3, 2);
+    const x = Tensor.tensor([[1, 0, 0], [0, 1, 0]]);
+    const out = linear.forward(x);
+    assert(out.shape[0] === 2 && out.shape[1] === 2, 'Linear output shape');
+
+    // Test that parameters exist and have correct shapes
+    const params = linear.parameters();
+    assert(params.length === 2, 'Linear has 2 parameters');
+    assert(linear.weight.value.shape[0] === 3, 'Linear weight shape[0]');
+    assert(linear.weight.value.shape[1] === 2, 'Linear weight shape[1]');
+    assert(linear.bias.value.shape[0] === 2, 'Linear bias shape');
+}
+
+// ============================================================
+// Linear backward
+// ============================================================
+
+section('Linear backward');
+
+{
+    const linear = new Linear(2, 1);
+    const x = Tensor.tensor([[1, 2]]);
+    x.history = new TensorHistory();
+    const out = linear.forward(x);
+    const loss = out.sum();
+    loss.backward();
+    // Weight and bias should have gradients
+    assert(linear.weight.value.grad !== null, 'Linear weight has grad');
+    assert(linear.bias.value.grad !== null, 'Linear bias has grad');
+    assert(x.grad !== null, 'Linear input has grad');
+}
+
+// ============================================================
+// RMSNorm
+// ============================================================
+
+section('RMSNorm');
+
+{
+    const norm = new RMSNorm(3);
+    const x = Tensor.tensor([[1, 2, 3]]);
+    x.history = new TensorHistory();
+    const out = norm.forward(x);
+    assert(out.shape[0] === 1 && out.shape[1] === 3, 'RMSNorm output shape');
+
+    // RMS of [1,2,3] = sqrt(mean([1,4,9])) = sqrt(14/3)
+    // normalized = [1,2,3] / sqrt(14/3)
+    const rms = Math.sqrt((1 + 4 + 9) / 3);
+    assertClose(out.get([0, 0]), 1 / rms, 1e-4, 'RMSNorm value [0]');
+    assertClose(out.get([0, 1]), 2 / rms, 1e-4, 'RMSNorm value [1]');
+    assertClose(out.get([0, 2]), 3 / rms, 1e-4, 'RMSNorm value [2]');
+
+    // Should support backward
+    out.sum().backward();
+    assert(x.grad !== null, 'RMSNorm backward produces grad');
+}
+
+// ============================================================
+// softmax
+// ============================================================
+
+section('softmax');
+
+{
+    const x = Tensor.tensor([[1, 2, 3]]);
+    const s = softmax(x, -1);
+    assert(s.shape[0] === 1 && s.shape[1] === 3, 'softmax shape');
+
+    // All positive
+    assert(s.get([0, 0]) > 0, 'softmax positive [0]');
+    assert(s.get([0, 1]) > 0, 'softmax positive [1]');
+    assert(s.get([0, 2]) > 0, 'softmax positive [2]');
+
+    // Sum to 1
+    const total = s.get([0, 0]) + s.get([0, 1]) + s.get([0, 2]);
+    assertClose(total, 1.0, 1e-5, 'softmax sums to 1');
+
+    // Monotonic
+    assert(s.get([0, 2]) > s.get([0, 1]), 'softmax monotonic');
+    assert(s.get([0, 1]) > s.get([0, 0]), 'softmax monotonic 2');
+}
+
+// ============================================================
+// mseLoss
+// ============================================================
+
+section('mseLoss');
+
+{
+    const pred = Tensor.tensor([1, 2, 3]);
+    const target = Tensor.tensor([1, 2, 3]);
+    const loss = mseLoss(pred, target);
+    assertClose(loss.item(), 0, 1e-6, 'mseLoss perfect prediction');
+
+    const pred2 = Tensor.tensor([1, 2, 3]);
+    pred2.history = new TensorHistory();
+    const target2 = Tensor.tensor([2, 3, 4]);
+    const loss2 = mseLoss(pred2, target2);
+    // MSE = mean([(1-2)^2, (2-3)^2, (3-4)^2]) = mean([1,1,1]) = 1
+    assertClose(loss2.item(), 1, 1e-6, 'mseLoss value');
+
+    loss2.backward();
+    // d/dpred MSE = 2*(pred-target)/n = 2*(-1)/3 = -2/3
+    assertClose(pred2.grad.get([0]), -2/3, 1e-5, 'mseLoss grad [0]');
+}
+
+// ============================================================
+// tanh
+// ============================================================
+
+section('tanh');
+
+{
+    const x = Tensor.tensor([0, 1, -1]);
+    const y = tanh(x);
+    assertClose(y.get([0]), Math.tanh(0), 1e-4, 'tanh(0)');
+    assertClose(y.get([1]), Math.tanh(1), 1e-3, 'tanh(1)');
+    assertClose(y.get([2]), Math.tanh(-1), 1e-3, 'tanh(-1)');
 }
 
 // ============================================================
