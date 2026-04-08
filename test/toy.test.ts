@@ -4,6 +4,7 @@ import { SGD } from '../toy/optimizer.ts';
 import { Parameter } from '../toy/module.ts';
 import { Linear, RMSNorm, softmax, mseLoss, tanh } from '../toy/nn.ts';
 import { VectorQuantize } from '../extensions/quantization/vq.ts';
+import { FiniteScalarQuantize } from '../extensions/quantization/fsq.ts';
 
 let passed = 0;
 let failed = 0;
@@ -541,6 +542,62 @@ section('VectorQuantize nearest neighbor');
     assert(indices[0] === 0, 'VQ nearest to [1,0]');
     // [-0.1, 0.8] should be closest to [0, 1] (index 1)
     assert(indices[1] === 1, 'VQ nearest to [0,1]');
+}
+
+// ============================================================
+// FiniteScalarQuantize
+// ============================================================
+
+section('FiniteScalarQuantize');
+
+{
+    const fsq = new FiniteScalarQuantize([8, 5, 5, 5]);
+    assert(fsq.implicitCodebookSize === 1000, 'FSQ implicit codebook size');
+
+    const x = Tensor.tensor([[0.3, -0.5, 0.8, -0.2], [1.0, -1.0, 0.0, 0.5]]);
+    x.history = new TensorHistory();
+    const { quantized, indices } = fsq.forward(x);
+
+    // Output shape matches input
+    assert(quantized.shape[0] === 2 && quantized.shape[1] === 4, 'FSQ output shape');
+
+    // Indices are valid
+    assert(indices.length === 2, 'FSQ indices length');
+    assert(indices.every(i => i >= 0 && i < 1000), 'FSQ indices in range');
+
+    // Output values should be on the discrete grid [-1, 1]
+    for (let i = 0; i < 2; i++) {
+        for (let c = 0; c < 4; c++) {
+            const val = quantized.get([i, c]);
+            const L = [8, 5, 5, 5][c];
+            // val should be of the form: k/(L-1)*2 - 1 for integer k in [0, L-1]
+            const scaled = (val + 1) / 2 * (L - 1);
+            const rounded = Math.round(scaled);
+            assertClose(scaled, rounded, 1e-4, `FSQ discrete grid [${i},${c}]`);
+        }
+    }
+
+    // Straight-through gradient
+    quantized.sum().backward();
+    assert(x.grad !== null, 'FSQ straight-through gradient exists');
+}
+
+// ============================================================
+// FSQ with simple levels
+// ============================================================
+
+section('FSQ simple levels');
+
+{
+    const fsq = new FiniteScalarQuantize([3, 3]);
+    assert(fsq.implicitCodebookSize === 9, 'FSQ 3x3 codebook size');
+
+    // Input at 0 (tanh(0)=0) should quantize to 0 which maps to middle level
+    const x = Tensor.tensor([[0, 0]]);
+    const { quantized } = fsq.forward(x);
+    // tanh(0) = 0, scaled = (0+1)/2 * 2 = 1, round(1)=1, back = 1/2*2-1 = 0
+    assertClose(quantized.get([0, 0]), 0, 1e-4, 'FSQ center quantizes to 0');
+    assertClose(quantized.get([0, 1]), 0, 1e-4, 'FSQ center quantizes to 0 (dim 1)');
 }
 
 // ============================================================
