@@ -1,0 +1,32 @@
+[package]
+name = "mni-framework-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["cpu"]
+cpu = []
+cuda = ["dep:cudarc"]
+webgpu = ["dep:wgpu", "dep:pollster"]
+
+[dependencies]
+napi = { version = "2", features = ["napi8"] }
+napi-derive = "2"
+cudarc = { version = "0.16", features = ["cublas", "nvrtc", "curand", "cuda-version-from-build-system"], optional = true }
+wgpu = { version = "24", optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1.14", features = ["derive"] }
+rand = "0.8"
+rand_distr = "0.4"
+parking_lot = "0.12"
+smallvec = "1.13"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+opt-level = 3

@@ -1,0 +1,326 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── CPU builds ──
+          - target: x86_64-apple-darwin
+            os: macos-14
+            suffix: darwin-x64
+            lib_ext: dylib
+            feature: cpu
+
+          - target: aarch64-apple-darwin
+            os: macos-14
+            suffix: darwin-arm64
+            lib_ext: dylib
+            feature: cpu
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-x64-gnu
+            lib_ext: so
+            feature: cpu
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-arm64-gnu
+            lib_ext: so
+            feature: cpu
+            cross: true
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            suffix: win32-x64-msvc
+            lib_ext: dll
+            feature: cpu
+
+          # ── WebGPU builds ──
+          - target: aarch64-apple-darwin
+            os: macos-14
+            suffix: darwin-arm64-webgpu
+            lib_ext: dylib
+            feature: webgpu
+
+          - target: x86_64-apple-darwin
+            os: macos-14
+            suffix: darwin-x64-webgpu
+            lib_ext: dylib
+            feature: webgpu
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-x64-gnu-webgpu
+            lib_ext: so
+            feature: webgpu
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            suffix: win32-x64-msvc-webgpu
+            lib_ext: dll
+            feature: webgpu
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.suffix }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install Vulkan SDK (Linux WebGPU)
+        if: matrix.feature == 'webgpu' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/native/target
+          key: cargo-${{ matrix.target }}-${{ matrix.feature }}-${{ hashFiles('src/native/Cargo.lock') }}
+          restore-keys: cargo-${{ matrix.target }}-${{ matrix.feature }}-
+
+      - name: Build native addon
+        working-directory: src/native
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+        run: cargo build --release --target ${{ matrix.target }} --no-default-features --features ${{ matrix.feature }}
+
+      - name: Copy binary
+        shell: bash
+        run: |
+          BINARY_NAME="mni-framework-native.${{ matrix.suffix }}.node"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp "src/native/target/${{ matrix.target }}/release/mni_framework_native.dll" "npm/${{ matrix.suffix }}/$BINARY_NAME"
+          else
+            cp "src/native/target/${{ matrix.target }}/release/libmni_framework_native.${{ matrix.lib_ext }}" "npm/${{ matrix.suffix }}/$BINARY_NAME"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.suffix }}
+          path: npm/${{ matrix.suffix }}/
+          if-no-files-found: error
+
+  build-cuda:
+    runs-on: ubuntu-latest
+    name: Build linux-x64-gnu-cuda
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and build CUDA addon
+        working-directory: src/native
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+          . "$HOME/.cargo/env"
+          cargo build --release --no-default-features --features cuda
+
+      - name: Copy binary
+        run: |
+          cp src/native/target/release/libmni_framework_native.so npm/linux-x64-gnu-cuda/mni-framework-native.linux-x64-gnu-cuda.node
+          ls -lh npm/linux-x64-gnu-cuda/mni-framework-native.linux-x64-gnu-cuda.node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x64-gnu-cuda
+          path: npm/linux-x64-gnu-cuda/
+          if-no-files-found: error
+
+  build-cuda-windows:
+    runs-on: windows-latest
+    name: Build win32-x64-msvc-cuda
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        id: cuda-toolkit
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/native/target
+          key: cargo-x86_64-pc-windows-msvc-cuda-${{ hashFiles('src/native/Cargo.lock') }}
+          restore-keys: cargo-x86_64-pc-windows-msvc-cuda-
+
+      - name: Build CUDA addon
+        working-directory: src/native
+        shell: bash
+        run: cargo build --release --target x86_64-pc-windows-msvc --no-default-features --features cuda
+
+      - name: Copy binary
+        shell: bash
+        run: |
+          cp src/native/target/x86_64-pc-windows-msvc/release/mni_framework_native.dll npm/win32-x64-msvc-cuda/mni-framework-native.win32-x64-msvc-cuda.node
+          ls -lh npm/win32-x64-msvc-cuda/mni-framework-native.win32-x64-msvc-cuda.node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-win32-x64-msvc-cuda
+          path: npm/win32-x64-msvc-cuda/
+          if-no-files-found: error
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            suffix: darwin-arm64
+            artifact: native-darwin-arm64
+          - os: ubuntu-latest
+            suffix: linux-x64-gnu
+            artifact: native-linux-x64-gnu
+          - os: windows-latest
+            suffix: win32-x64-msvc
+            artifact: native-win32-x64-msvc
+
+    runs-on: ${{ matrix.os }}
+    name: Test ${{ matrix.suffix }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: src/native/
+
+      - name: Install dependencies and build TypeScript
+        shell: bash
+        run: |
+          npm install --no-optional
+          npx tsc
+
+      - name: Run tests
+        run: node test/ops.test.js
+
+  publish:
+    needs: [test, build-cuda, build-cuda-windows]
+    runs-on: ubuntu-latest
+    name: Publish packages
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare platform packages
+        run: |
+          for suffix in darwin-arm64 darwin-arm64-webgpu darwin-x64 darwin-x64-webgpu linux-arm64-gnu linux-x64-gnu linux-x64-gnu-cuda linux-x64-gnu-webgpu win32-x64-msvc win32-x64-msvc-cuda win32-x64-msvc-webgpu; do
+            PKG_DIR="npm/$suffix"
+            cp artifacts/native-$suffix/mni-framework-native.*.node "$PKG_DIR/" 2>/dev/null || true
+
+            cd "$PKG_DIR"
+            node -e "
+              const pkg = require('./package.json');
+              pkg.version = '${{ steps.version.outputs.VERSION }}';
+              require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+            echo "=== $suffix ==="
+            ls -lh *.node 2>/dev/null || echo "(no binary — skipped)"
+            cd "$GITHUB_WORKSPACE"
+          done
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for suffix in darwin-arm64 darwin-arm64-webgpu darwin-x64 darwin-x64-webgpu linux-arm64-gnu linux-x64-gnu linux-x64-gnu-cuda linux-x64-gnu-webgpu win32-x64-msvc win32-x64-msvc-cuda win32-x64-msvc-webgpu; do
+            PKG_DIR="npm/$suffix"
+            if ls "$PKG_DIR"/mni-framework-native.*.node 1>/dev/null 2>&1; then
+              echo "Publishing @mni-ml/framework-$suffix..."
+              cd "$PKG_DIR"
+              npm publish --provenance --access public || echo "Warning: publish failed for $suffix"
+              cd "$GITHUB_WORKSPACE"
+            else
+              echo "Skipping $suffix (no binary)"
+            fi
+          done
+
+      - name: Build and publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            pkg.version = '${{ steps.version.outputs.VERSION }}';
+            for (const dep of Object.keys(pkg.optionalDependencies || {})) {
+              pkg.optionalDependencies[dep] = '${{ steps.version.outputs.VERSION }}';
+            }
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          npm install
+          npx tsc
+          npm publish --provenance --access public

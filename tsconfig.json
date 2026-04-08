@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "esnext",
+    "types": ["node"],
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/tensor.ts",
+    "src/module.ts",
+    "src/nn.ts",
+    "src/optimizer.ts",
+    "src/index.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "dist",
+    "node_modules"
+  ]
+}
