@@ -3,6 +3,7 @@ import { TensorHistory } from '../toy/tensor_functions.ts';
 import { SGD } from '../toy/optimizer.ts';
 import { Parameter } from '../toy/module.ts';
 import { Linear, RMSNorm, softmax, mseLoss, tanh } from '../toy/nn.ts';
+import { VectorQuantize } from '../extensions/quantization/vq.ts';
 
 let passed = 0;
 let failed = 0;
@@ -489,6 +490,57 @@ section('tanh');
     assertClose(y.get([0]), Math.tanh(0), 1e-4, 'tanh(0)');
     assertClose(y.get([1]), Math.tanh(1), 1e-3, 'tanh(1)');
     assertClose(y.get([2]), Math.tanh(-1), 1e-3, 'tanh(-1)');
+}
+
+// ============================================================
+// VectorQuantize
+// ============================================================
+
+section('VectorQuantize');
+
+{
+    const vq = new VectorQuantize(4, 8);
+    const x = Tensor.tensor([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]);
+    x.history = new TensorHistory();
+    const { quantized, indices, commitmentLoss } = vq.forward(x);
+
+    // Output shape matches input
+    assert(quantized.shape[0] === 3 && quantized.shape[1] === 4, 'VQ output shape');
+
+    // Indices are valid codebook entries
+    assert(indices.length === 3, 'VQ indices length');
+    assert(indices.every(i => i >= 0 && i < 8), 'VQ indices in range');
+
+    // Commitment loss is non-negative
+    assert(commitmentLoss.item() >= 0, 'VQ commitment loss non-negative');
+
+    // Straight-through: gradient should flow through x
+    quantized.sum().backward();
+    assert(x.grad !== null, 'VQ straight-through gradient exists');
+    // Gradient should be all ones (from sum) since straight-through passes through
+    assertClose(x.grad.get([0, 0]), 1, 1e-5, 'VQ straight-through grad value');
+}
+
+// ============================================================
+// VectorQuantize - nearest neighbor correctness
+// ============================================================
+
+section('VectorQuantize nearest neighbor');
+
+{
+    const vq = new VectorQuantize(2, 4);
+    // Set codebook manually to known values
+    const cb = Tensor.tensor([[1, 0], [0, 1], [-1, 0], [0, -1]]);
+    cb.history = new TensorHistory();
+    vq.codebook = new Parameter(cb);
+
+    const x = Tensor.tensor([[0.9, 0.1], [-0.1, 0.8]]);
+    const { indices } = vq.forward(x);
+
+    // [0.9, 0.1] should be closest to [1, 0] (index 0)
+    assert(indices[0] === 0, 'VQ nearest to [1,0]');
+    // [-0.1, 0.8] should be closest to [0, 1] (index 1)
+    assert(indices[1] === 1, 'VQ nearest to [0,1]');
 }
 
 // ============================================================
