@@ -8,9 +8,9 @@ import {
 } from './tensor_data.js'
 import * as tensorFunctions from './tensor_functions.js'
 import { tensorMap } from './tensor_ops.js'
-import { 
-    TensorContext, 
-    TensorHistory, 
+import {
+    TensorContext,
+    TensorHistory,
     TensorFunction,
     Neg as NegFn,
     Sigmoid as SigmoidFn,
@@ -18,6 +18,9 @@ import {
     Log as LogFn,
     Exp as ExpFn,
     Inv as InvFn,
+    Sin as SinFn,
+    Cos as CosFn,
+    Sqrt as SqrtFn,
     Add as AddFn,
     Mul as MulFn,
     LT as LTFn,
@@ -187,6 +190,18 @@ export class Tensor {
 
     inv(): Tensor {
         return Tensor.apply(InvFn, this);
+    }
+
+    sin(): Tensor {
+        return Tensor.apply(SinFn, this);
+    }
+
+    cos(): Tensor {
+        return Tensor.apply(CosFn, this);
+    }
+
+    sqrt(): Tensor {
+        return Tensor.apply(SqrtFn, this);
     }
 
     add(other: number | Tensor): Tensor {
