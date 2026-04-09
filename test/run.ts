@@ -1,23 +1,33 @@
-import { startSuite, endSuite, summarize } from './helpers.js';
+import { assert, startSuite, endSuite, summarize } from './helpers.js';
 
-startSuite('test/tensor.test.ts');
-await import('./tensor.test.js');
-endSuite('test/tensor.test.ts');
+const suites = [
+    ['test/tensor.test.ts', './tensor.test.js'],
+    ['test/nn.test.ts', './nn.test.js'],
+    ['test/autograd.test.ts', './autograd.test.js'],
+    ['test/module.test.ts', './module.test.js'],
+    ['test/native.test.ts', './native.test.js'],
+] as const;
 
-startSuite('test/nn.test.ts');
-await import('./nn.test.js');
-endSuite('test/nn.test.ts');
+function formatError(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return String(error);
+}
 
-startSuite('test/autograd.test.ts');
-await import('./autograd.test.js');
-endSuite('test/autograd.test.ts');
+async function runSuite(file: string, specifier: string): Promise<void> {
+    startSuite(file);
+    try {
+        await import(specifier);
+    } catch (error) {
+        assert(false, `${file} failed to load: ${formatError(error)}`);
+    } finally {
+        endSuite(file);
+    }
+}
 
-startSuite('test/module.test.ts');
-await import('./module.test.js');
-endSuite('test/module.test.ts');
-
-startSuite('test/native.test.ts');
-await import('./native.test.js');
-endSuite('test/native.test.ts');
+for (const [file, specifier] of suites) {
+    await runSuite(file, specifier);
+}
 
 summarize();

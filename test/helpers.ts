@@ -67,8 +67,7 @@ export function endSuite(file: string): void {
     const badge = suiteFailed > 0
         ? `${redBg} FAIL ${reset}`
         : `${greenBg} PASS ${reset}`;
-    // Move cursor up to overwrite the blank line from startSuite, print badge
-    console.log(`\x1b[A${badge} ${file}`);
+    console.log(`${badge} ${file}`);
     if (suiteFailed > 0) suitesFailed++;
 }
 

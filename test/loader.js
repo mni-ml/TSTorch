@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve as pathResolve } from 'path';
 
 export async function resolve(specifier, context, nextResolve) {
-    // Only intercept relative .js imports within test/
+    // Remap relative .js imports to sibling .ts files when the .js file is absent.
     if (specifier.endsWith('.js') && (specifier.startsWith('./') || specifier.startsWith('../'))) {
         const parentPath = context.parentURL ? fileURLToPath(context.parentURL) : process.cwd();
         const parentDir = context.parentURL ? dirname(parentPath) : parentPath;
