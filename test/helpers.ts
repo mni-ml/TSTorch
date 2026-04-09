@@ -10,6 +10,7 @@ export function assert(cond: boolean, msg: string): void {
         console.error(`  FAIL: ${msg}`);
     } else {
         passed++;
+        console.log(`  pass  ${msg}`);
     }
 }
 
@@ -21,6 +22,7 @@ export function assertClose(a: number, b: number, tol: number = 1e-4, msg: strin
         console.error(`  FAIL: ${detail}`);
     } else {
         passed++;
+        console.log(`  pass  ${msg}`);
     }
 }
 
