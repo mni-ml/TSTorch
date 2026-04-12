@@ -54,3 +54,12 @@ assertClose(sinGrad[1], 0.0, 1e-4, 'd/dx sin(pi/2) = cos(pi/2) = 0');
 assertClose(sinGrad[2], -1.0, 1e-4, 'd/dx sin(pi) = cos(pi) = -1');
 assertClose(sinGrad[3], Math.SQRT1_2, 1e-4, 'd/dx sin(pi/4) = cos(pi/4)');
 
+// d/dx cos(x) = -sin(x)
+const cosX = Tensor.fromFloat32(new Float32Array([0, Math.PI / 2, Math.PI, Math.PI / 4]), [4]).setRequiresGrad(true);
+cosX.cos().sum().backward();
+const cosGrad = cosX.grad!.toFloat32();
+assertClose(cosGrad[0], 0.0, 1e-4, 'd/dx cos(0) = -sin(0) = 0');
+assertClose(cosGrad[1], -1.0, 1e-4, 'd/dx cos(pi/2) = -sin(pi/2) = -1');
+assertClose(cosGrad[2], 0.0, 1e-4, 'd/dx cos(pi) = -sin(pi) = 0');
+assertClose(cosGrad[3], -Math.SQRT1_2, 1e-4, 'd/dx cos(pi/4) = -sin(pi/4)');
+

@@ -156,6 +156,18 @@ const sinResult2d = sinInput2d.sin().toFloat32();
 assertClose(sinResult2d[1], 0.5, 1e-5, 'sin(pi/6) = 0.5 (2D)');
 assertClose(sinResult2d[2], Math.SQRT1_2, 1e-5, 'sin(pi/4) = sqrt(2)/2 (2D)');
 
+const cosInput = Tensor.fromFloat32(new Float32Array([0, Math.PI / 2, Math.PI, -Math.PI / 2]), [4]);
+const cosResult = cosInput.cos().toFloat32();
+assertClose(cosResult[0], 1.0, 1e-5, 'cos(0) = 1');
+assertClose(cosResult[1], 0.0, 1e-5, 'cos(pi/2) = 0');
+assertClose(cosResult[2], -1.0, 1e-5, 'cos(pi) = -1');
+assertClose(cosResult[3], 0.0, 1e-5, 'cos(-pi/2) = 0');
+
+const cosInput2d = Tensor.fromFloat32(new Float32Array([0, Math.PI / 3, Math.PI / 4, Math.PI / 6]), [2, 2]);
+const cosResult2d = cosInput2d.cos().toFloat32();
+assertClose(cosResult2d[1], 0.5, 1e-5, 'cos(pi/3) = 0.5 (2D)');
+assertClose(cosResult2d[2], Math.SQRT1_2, 1e-5, 'cos(pi/4) = sqrt(2)/2 (2D)');
+
 const sigInput = Tensor.fromFloat32(new Float32Array([0, 100, -100]), [3]);
 const sigResult = sigInput.sigmoid().toFloat32();
 assertClose(sigResult[0], 0.5, 1e-4, 'sigmoid(0) = 0.5');

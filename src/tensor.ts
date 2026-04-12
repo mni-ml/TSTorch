@@ -247,6 +247,10 @@ export class Tensor {
         return new Tensor(native.sinOp(this._id));
     }
 
+    cos(): Tensor {
+        return new Tensor(native.cosOp(this._id));
+    }
+
     // ---- Activation ----
 
     relu(): Tensor {
