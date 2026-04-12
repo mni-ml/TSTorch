@@ -65,6 +65,18 @@ void cos_backward_f32(float* dx, const float* dy, const float* x, int n) {
 }
 
 extern "C" __global__
+void sqrt_f32(float* out, const float* a, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = sqrtf(fmaxf(a[i], 0.0f));
+}
+
+extern "C" __global__
+void sqrt_backward_f32(float* dx, const float* dy, const float* x, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) dx[i] = x[i] > 0.0f ? dy[i] * 0.5f / sqrtf(x[i]) : 0.0f;
+}
+
+extern "C" __global__
 void add_bias_f32(float* out, const float* a, const float* bias, int total, int bias_size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < total) out[i] = a[i] + bias[i % bias_size];

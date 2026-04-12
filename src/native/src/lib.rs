@@ -240,6 +240,13 @@ pub fn cos_op(a: u32) -> u32 {
 }
 
 #[napi]
+pub fn sqrt_op(a: u32) -> u32 {
+    let mut e = engine().lock();
+    let Engine { store, tape, .. } = &mut *e;
+    ops::elementwise::sqrt(a as TensorId, store, tape) as u32
+}
+
+#[napi]
 pub fn sum_op(a: u32, dim: i64) -> u32 {
     let mut e = engine().lock();
     let Engine { store, tape, .. } = &mut *e;

@@ -168,6 +168,23 @@ const cosResult2d = cosInput2d.cos().toFloat32();
 assertClose(cosResult2d[1], 0.5, 1e-5, 'cos(pi/3) = 0.5 (2D)');
 assertClose(cosResult2d[2], Math.SQRT1_2, 1e-5, 'cos(pi/4) = sqrt(2)/2 (2D)');
 
+const sqrtInput = Tensor.fromFloat32(new Float32Array([0, 1, 4, 9]), [4]);
+const sqrtResult = sqrtInput.sqrt().toFloat32();
+assertClose(sqrtResult[0], 0.0, 1e-5, 'sqrt(0) = 0');
+assertClose(sqrtResult[1], 1.0, 1e-5, 'sqrt(1) = 1');
+assertClose(sqrtResult[2], 2.0, 1e-5, 'sqrt(4) = 2');
+assertClose(sqrtResult[3], 3.0, 1e-5, 'sqrt(9) = 3');
+
+const sqrtNeg = Tensor.fromFloat32(new Float32Array([-1, -4, 2.25]), [3]);
+const sqrtNegResult = sqrtNeg.sqrt().toFloat32();
+assertClose(sqrtNegResult[0], 0.0, 1e-5, 'sqrt(-1) clamps to 0');
+assertClose(sqrtNegResult[1], 0.0, 1e-5, 'sqrt(-4) clamps to 0');
+assertClose(sqrtNegResult[2], 1.5, 1e-5, 'sqrt(2.25) = 1.5');
+
+const sqrt2d = Tensor.fromFloat32(new Float32Array([1, 4, 9, 16]), [2, 2]);
+const sqrt2dResult = sqrt2d.sqrt().toFloat32();
+assertClose(sqrt2dResult[3], 4.0, 1e-5, 'sqrt(16) = 4 (2D)');
+
 const sigInput = Tensor.fromFloat32(new Float32Array([0, 100, -100]), [3]);
 const sigResult = sigInput.sigmoid().toFloat32();
 assertClose(sigResult[0], 0.5, 1e-4, 'sigmoid(0) = 0.5');

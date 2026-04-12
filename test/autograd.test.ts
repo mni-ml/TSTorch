@@ -63,3 +63,12 @@ assertClose(cosGrad[1], -1.0, 1e-4, 'd/dx cos(pi/2) = -sin(pi/2) = -1');
 assertClose(cosGrad[2], 0.0, 1e-4, 'd/dx cos(pi) = -sin(pi) = 0');
 assertClose(cosGrad[3], -Math.SQRT1_2, 1e-4, 'd/dx cos(pi/4) = -sin(pi/4)');
 
+// d/dx sqrt(x) = 1/(2*sqrt(x)) for x>0, else 0
+const sqrtX = Tensor.fromFloat32(new Float32Array([1, 4, 9, -2]), [4]).setRequiresGrad(true);
+sqrtX.sqrt().sum().backward();
+const sqrtGrad = sqrtX.grad!.toFloat32();
+assertClose(sqrtGrad[0], 0.5, 1e-4, 'd/dx sqrt(1) = 0.5');
+assertClose(sqrtGrad[1], 0.25, 1e-4, 'd/dx sqrt(4) = 0.25');
+assertClose(sqrtGrad[2], 1 / 6, 1e-4, 'd/dx sqrt(9) = 1/6');
+assertClose(sqrtGrad[3], 0.0, 1e-5, 'd/dx sqrt(-2) = 0 (clamped region)');
+

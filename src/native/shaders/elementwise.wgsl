@@ -72,6 +72,21 @@ fn cos_backward_f32(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 @compute @workgroup_size(256)
+fn sqrt_f32(@builtin(global_invocation_id) gid: vec3u) {
+    let i = gid.x;
+    if (i < params.n) { out[i] = sqrt(max(a[i], 0.0)); }
+}
+
+@compute @workgroup_size(256)
+fn sqrt_backward_f32(@builtin(global_invocation_id) gid: vec3u) {
+    let i = gid.x;
+    if (i < params.n) {
+        let x = b[i]; // a=grad, b=input
+        out[i] = select(0.0, a[i] * 0.5 / sqrt(x), x > 0.0);
+    }
+}
+
+@compute @workgroup_size(256)
 fn div_f32(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if (i < params.n) { out[i] = a[i] / b[i]; }
