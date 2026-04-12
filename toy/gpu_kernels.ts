@@ -15,7 +15,7 @@ export const UNARY_OPS: Record<string, string> = {
     inv:     'return 1.0 / x;',
     sin:     'return sin(x);',
     cos:     'return cos(x);',
-    sqrt:    'return sqrt(x);',
+    sqrt:    'return sqrt(max(x, 0.0));',
 };
 
 export const BINARY_OPS: Record<string, string> = {
