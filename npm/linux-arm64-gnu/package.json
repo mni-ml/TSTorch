@@ -1,6 +1,6 @@
 {
   "name": "@mni-ml/framework-linux-arm64-gnu",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Linux ARM64 (glibc) native binary for @mni-ml/framework",
   "os": [
     "linux"

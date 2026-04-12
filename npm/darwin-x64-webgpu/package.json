@@ -1,6 +1,6 @@
 {
   "name": "@mni-ml/framework-darwin-x64-webgpu",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "macOS Intel WebGPU (Metal) native binary for @mni-ml/framework",
   "os": [
     "darwin"

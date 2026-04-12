@@ -1,6 +1,6 @@
 {
   "name": "@mni-ml/framework-linux-x64-gnu-cuda",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Linux x64 CUDA native binary for @mni-ml/framework (requires NVIDIA GPU + CUDA drivers)",
   "os": [
     "linux"

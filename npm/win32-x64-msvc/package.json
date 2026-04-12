@@ -1,6 +1,6 @@
 {
   "name": "@mni-ml/framework-win32-x64-msvc",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Windows x64 native binary for @mni-ml/framework",
   "os": [
     "win32"

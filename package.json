@@ -1,7 +1,7 @@
 {
   "name": "@mni-ml/framework",
   "type": "module",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "A TypeScript ML framework with Rust native backends (CPU, CUDA, WebGPU) — autograd, tensors, and neural network training at GPU speed.",
   "license": "MIT",
   "repository": {
@@ -36,17 +36,17 @@
     "README.md"
   ],
   "optionalDependencies": {
-    "@mni-ml/framework-darwin-arm64": "0.3.1",
-    "@mni-ml/framework-darwin-arm64-webgpu": "0.3.1",
-    "@mni-ml/framework-darwin-x64": "0.3.1",
-    "@mni-ml/framework-darwin-x64-webgpu": "0.3.1",
-    "@mni-ml/framework-linux-arm64-gnu": "0.3.1",
-    "@mni-ml/framework-linux-x64-gnu": "0.3.1",
-    "@mni-ml/framework-linux-x64-gnu-cuda": "0.3.1",
-    "@mni-ml/framework-linux-x64-gnu-webgpu": "0.3.1",
-    "@mni-ml/framework-win32-x64-msvc": "0.3.1",
-    "@mni-ml/framework-win32-x64-msvc-cuda": "0.3.1",
-    "@mni-ml/framework-win32-x64-msvc-webgpu": "0.3.1"
+    "@mni-ml/framework-darwin-arm64": "0.3.3",
+    "@mni-ml/framework-darwin-arm64-webgpu": "0.3.3",
+    "@mni-ml/framework-darwin-x64": "0.3.3",
+    "@mni-ml/framework-darwin-x64-webgpu": "0.3.3",
+    "@mni-ml/framework-linux-arm64-gnu": "0.3.3",
+    "@mni-ml/framework-linux-x64-gnu": "0.3.3",
+    "@mni-ml/framework-linux-x64-gnu-cuda": "0.3.3",
+    "@mni-ml/framework-linux-x64-gnu-webgpu": "0.3.3",
+    "@mni-ml/framework-win32-x64-msvc": "0.3.3",
+    "@mni-ml/framework-win32-x64-msvc-cuda": "0.3.3",
+    "@mni-ml/framework-win32-x64-msvc-webgpu": "0.3.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
