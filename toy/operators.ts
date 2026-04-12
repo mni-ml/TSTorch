@@ -70,7 +70,7 @@ export function cos(x: number):number {
 }
 
 export function sqrt(x: number):number {
-    return Math.sqrt(Math.max(x, EPS));
+    return Math.sqrt(Math.max(x, 0));
 }
 
 export function inv(x: number):number {
