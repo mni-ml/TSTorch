@@ -7,6 +7,8 @@ import {
     shapeProduct,
     shapeBroadcast,
     strides,
+    indexToPosition,
+    createSharedStorage,
 } from './tensor_data.js';
 import { fastTensorMap as tensorMap, fastTensorZip as tensorZip, fastTensorReduce as tensorReduce } from './fast_ops.js';
 import * as operators from './operators.js'
@@ -56,6 +58,27 @@ export function exp(a: TensorData): TensorData {
 export function id(a: TensorData): TensorData {
     const out = zeros(a.shape);
     const mapFn = tensorMap(operators.id);
+    mapFn(out.storage, out.shape, out.strides, a.storage, a.shape, a.strides);
+    return out;
+}
+
+export function sin(a: TensorData): TensorData {
+    const out = zeros(a.shape);
+    const mapFn = tensorMap(operators.sin);
+    mapFn(out.storage, out.shape, out.strides, a.storage, a.shape, a.strides);
+    return out;
+}
+
+export function cos(a: TensorData): TensorData {
+    const out = zeros(a.shape);
+    const mapFn = tensorMap(operators.cos);
+    mapFn(out.storage, out.shape, out.strides, a.storage, a.shape, a.strides);
+    return out;
+}
+
+export function sqrt(a: TensorData): TensorData {
+    const out = zeros(a.shape);
+    const mapFn = tensorMap(operators.sqrt);
     mapFn(out.storage, out.shape, out.strides, a.storage, a.shape, a.strides);
     return out;
 }
@@ -186,6 +209,32 @@ export function contiguous(a: TensorData): TensorData {
     return id(a);
 }
 
+export function matmul(a: TensorData, b: TensorData): TensorData {
+    if (a.dims !== 2 || b.dims !== 2) {
+        throw new Error(`matmul requires 2D tensors, got ${a.dims}D and ${b.dims}D`);
+    }
+    const M = a.shape[0]!;
+    const K = a.shape[1]!;
+    const N = b.shape[1]!;
+    if (K !== b.shape[0]!) {
+        throw new Error(`matmul shape mismatch: [${a.shape}] x [${b.shape}]`);
+    }
+    const outStorage = createSharedStorage(M * N);
+    const out = new TensorData(outStorage, [M, N]);
+    const aStr = a.strides;
+    const bStr = b.strides;
+    for (let i = 0; i < M; i++) {
+        for (let j = 0; j < N; j++) {
+            let acc = 0;
+            for (let k = 0; k < K; k++) {
+                acc += a.storage[i * aStr[0]! + k * aStr[1]!]! * b.storage[k * bStr[0]! + j * bStr[1]!]!;
+            }
+            outStorage[i * N + j] = acc;
+        }
+    }
+    return out;
+}
+
 export class TensorContext {
     private _savedTensors: Tensor[] = [];
 
@@ -199,11 +248,18 @@ export class TensorContext {
 }
 
 export class TensorHistory {
+    lastFn: typeof TensorFunction | null;
+    ctx: TensorContext | null;
+    inputs: Tensor[];
     constructor (
-        public lastFn: typeof TensorFunction | null = null,
-        public ctx: TensorContext | null = null,
-        public inputs: Tensor[] = []
-    ) {}
+        lastFn: typeof TensorFunction | null = null,
+        ctx: TensorContext | null = null,
+        inputs: Tensor[] = []
+    ) {
+        this.lastFn = lastFn;
+        this.ctx = ctx;
+        this.inputs = inputs;
+    }
 }
 
 export abstract class TensorFunction {
@@ -284,6 +340,55 @@ export class Inv extends TensorFunction {
         const [a] = ctx.savedTensors;
         // -grad / a^2
         return [gradOutput.neg().mul(a!.mul(a!).inv())];
+    }
+}
+
+export class Sin extends TensorFunction {
+    static forward(ctx: TensorContext, a: Tensor): Tensor {
+        ctx.saveForBackward(a);
+        return new Tensor(sin(a.data));
+    }
+    static backward(ctx: TensorContext, gradOutput: Tensor): Tensor[] {
+        const [a] = ctx.savedTensors;
+        return [gradOutput.mul(new Tensor(cos(a!.data)))];
+    }
+}
+
+export class Cos extends TensorFunction {
+    static forward(ctx: TensorContext, a: Tensor): Tensor {
+        ctx.saveForBackward(a);
+        return new Tensor(cos(a.data));
+    }
+    static backward(ctx: TensorContext, gradOutput: Tensor): Tensor[] {
+        const [a] = ctx.savedTensors;
+        return [gradOutput.mul(new Tensor(sin(a!.data))).neg()];
+    }
+}
+
+export class Sqrt extends TensorFunction {
+    static forward(ctx: TensorContext, a: Tensor): Tensor {
+        const result = new Tensor(sqrt(a.data));
+        ctx.saveForBackward(result);
+        return result;
+    }
+    static backward(ctx: TensorContext, gradOutput: Tensor): Tensor[] {
+        const [result] = ctx.savedTensors;
+        // d/dx sqrt(x) = 1 / (2 * sqrt(x)) = grad / (2 * result)
+        return [gradOutput.mul(result!.mul(Tensor.tensor(2)).inv())];
+    }
+}
+
+export class MatMul extends TensorFunction {
+    static forward(ctx: TensorContext, a: Tensor, b: Tensor): Tensor {
+        ctx.saveForBackward(a, b);
+        return new Tensor(matmul(a.data, b.data));
+    }
+    static backward(ctx: TensorContext, gradOutput: Tensor): Tensor[] {
+        const [a, b] = ctx.savedTensors;
+        // dL/dA = dL/dC @ B^T, dL/dB = A^T @ dL/dC
+        const gradA = new Tensor(matmul(gradOutput.data, permute(b!.data, [1, 0])));
+        const gradB = new Tensor(matmul(permute(a!.data, [1, 0]), gradOutput.data));
+        return [gradA, gradB];
     }
 }
 

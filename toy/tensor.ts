@@ -8,9 +8,9 @@ import {
 } from './tensor_data.js'
 import * as tensorFunctions from './tensor_functions.js'
 import { tensorMap } from './tensor_ops.js'
-import { 
-    TensorContext, 
-    TensorHistory, 
+import {
+    TensorContext,
+    TensorHistory,
     TensorFunction,
     Neg as NegFn,
     Sigmoid as SigmoidFn,
@@ -18,6 +18,10 @@ import {
     Log as LogFn,
     Exp as ExpFn,
     Inv as InvFn,
+    Sin as SinFn,
+    Cos as CosFn,
+    Sqrt as SqrtFn,
+    MatMul as MatMulFn,
     Add as AddFn,
     Mul as MulFn,
     LT as LTFn,
@@ -141,6 +145,28 @@ export class Tensor {
         return new Tensor(new TensorData(storage, shape));
     }
 
+    static randn(shape: Shape): Tensor {
+        const size = shapeProduct(shape);
+        const storage = new Float64Array(size);
+        for (let i = 0; i < size; i += 2) {
+            const u1 = Math.random() || 1e-10;
+            const u2 = Math.random();
+            const r = Math.sqrt(-2 * Math.log(u1));
+            storage[i] = r * Math.cos(2 * Math.PI * u2);
+            if (i + 1 < size) {
+                storage[i + 1] = r * Math.sin(2 * Math.PI * u2);
+            }
+        }
+        return new Tensor(new TensorData(storage, shape));
+    }
+
+    static parameter(shape: Shape, scale?: number): Tensor {
+        const s = scale ?? 1 / Math.sqrt(shapeProduct(shape));
+        const t = Tensor.randn(shape).mul(s);
+        const result = new Tensor(t.data, new TensorHistory());
+        return result;
+    }
+
     get size(): number {
         return this._data.size;
     }
@@ -187,6 +213,34 @@ export class Tensor {
 
     inv(): Tensor {
         return Tensor.apply(InvFn, this);
+    }
+
+    sin(): Tensor {
+        return Tensor.apply(SinFn, this);
+    }
+
+    cos(): Tensor {
+        return Tensor.apply(CosFn, this);
+    }
+
+    sqrt(): Tensor {
+        return Tensor.apply(SqrtFn, this);
+    }
+
+    matmul(other: Tensor): Tensor {
+        return Tensor.apply(MatMulFn, this, other);
+    }
+
+    div(other: number | Tensor): Tensor {
+        return this.mul(Tensor._ensureTensor(other).inv());
+    }
+
+    transpose(dim0: number = 0, dim1: number = 1): Tensor {
+        const order = [...Array(this.dims).keys()];
+        const tmp = order[dim0]!;
+        order[dim0] = order[dim1]!;
+        order[dim1] = tmp;
+        return this.permute(...order);
     }
 
     add(other: number | Tensor): Tensor {
@@ -242,6 +296,7 @@ export class Tensor {
             return result.view();
         }
 
+        if (dim < 0) dim = this.dims + dim;
         if (dim < 0 || dim >= this.dims) {
             throw new Error(`Invalid dimension ${dim} for tensor with ${this.dims} dimensions`);
         }
@@ -256,6 +311,7 @@ export class Tensor {
             return s.mul(1 / count);
         }
 
+        if (dim < 0) dim = this.dims + dim;
         if (dim < 0 || dim >= this.dims) {
             throw new Error(`Invalid dimension ${dim} for tensor with ${this.dims} dimensions`);
         }
@@ -298,6 +354,10 @@ export class Tensor {
 
     contiguous(): Tensor {
         return Tensor.apply(ContiguousFn, this);
+    }
+
+    detach(): Tensor {
+        return new Tensor(this._data);
     }
 
     zero_grad_():void {
