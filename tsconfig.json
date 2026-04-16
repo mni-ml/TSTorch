@@ -21,7 +21,8 @@
     "src/module.ts",
     "src/nn.ts",
     "src/optimizer.ts",
-    "src/index.ts"
+    "src/index.ts",
+    "src/browser.ts"
   ],
   "exclude": [
     "**/*.test.ts",
