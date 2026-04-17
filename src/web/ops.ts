@@ -1145,61 +1145,66 @@ export function layernormOp(xId: number, gammaId: number, betaId: number, eps: n
 
 export function flashAttention(qId: number, kId: number, vId: number, scale: number, causal: boolean): number {
     const qData = store.getContiguousData(qId);
-    const qShape = [...store.get(qId).shape]; // [B, H, T, D]
+    const qShape = [...store.get(qId).shape];
     const kData = store.getContiguousData(kId);
     const kShape = [...store.get(kId).shape];
     const vData = store.getContiguousData(vId);
     const vShape = [...store.get(vId).shape];
 
-    const B = qShape[0], H = qShape[1], T = qShape[2], D = qShape[3];
-    const outShape = [B, H, T, D];
-    const out = new Float32Array(B * H * T * D);
-    const attnWeights = new Float32Array(B * H * T * T);
+    // Support both 3D [N, T, D] and 4D [B, H, T, D]
+    const ndim = qShape.length;
+    const T = qShape[ndim - 2];
+    const D = qShape[ndim - 1];
+    let NB: number; // total number of independent attention batches
+    if (ndim === 3) {
+        NB = qShape[0];
+    } else {
+        NB = qShape[0] * qShape[1];
+    }
 
-    for (let b = 0; b < B; b++) {
-        for (let h = 0; h < H; h++) {
-            const bhOff = (b * H + h);
-            const qOff = bhOff * T * D;
-            const kOff = bhOff * T * D;
-            const vOff = bhOff * T * D;
-            const attnOff = bhOff * T * T;
-            const outOff = bhOff * T * D;
+    const outShape = [...qShape];
+    const totalElems = NB * T * D;
+    const out = new Float32Array(totalElems);
+    const attnWeights = new Float32Array(NB * T * T);
 
-            // scores = Q @ K^T * scale
-            for (let i = 0; i < T; i++) {
-                for (let j = 0; j < T; j++) {
-                    if (causal && j > i) {
-                        attnWeights[attnOff + i * T + j] = -Infinity;
-                        continue;
-                    }
-                    let dot = 0;
-                    for (let d = 0; d < D; d++)
-                        dot += qData[qOff + i * D + d] * kData[kOff + j * D + d];
-                    attnWeights[attnOff + i * T + j] = dot * scale;
+    for (let b = 0; b < NB; b++) {
+        const qOff = b * T * D;
+        const kOff = b * T * D;
+        const vOff = b * T * D;
+        const attnOff = b * T * T;
+        const outOff = b * T * D;
+
+        for (let i = 0; i < T; i++) {
+            for (let j = 0; j < T; j++) {
+                if (causal && j > i) {
+                    attnWeights[attnOff + i * T + j] = -Infinity;
+                    continue;
                 }
-                // softmax over j
-                let max = -Infinity;
-                for (let j = 0; j < T; j++) {
-                    const v = attnWeights[attnOff + i * T + j];
-                    if (v > max) max = v;
-                }
-                let sum = 0;
-                for (let j = 0; j < T; j++) {
-                    const e = Math.exp(attnWeights[attnOff + i * T + j] - max);
-                    attnWeights[attnOff + i * T + j] = e;
-                    sum += e;
-                }
-                for (let j = 0; j < T; j++) attnWeights[attnOff + i * T + j] /= sum;
+                let dot = 0;
+                for (let d = 0; d < D; d++)
+                    dot += qData[qOff + i * D + d] * kData[kOff + j * D + d];
+                attnWeights[attnOff + i * T + j] = dot * scale;
             }
+            let max = -Infinity;
+            for (let j = 0; j < T; j++) {
+                const v = attnWeights[attnOff + i * T + j];
+                if (v > max) max = v;
+            }
+            let sum = 0;
+            for (let j = 0; j < T; j++) {
+                const e = Math.exp(attnWeights[attnOff + i * T + j] - max);
+                attnWeights[attnOff + i * T + j] = e;
+                sum += e;
+            }
+            for (let j = 0; j < T; j++) attnWeights[attnOff + i * T + j] /= sum;
+        }
 
-            // out = attn @ V
-            for (let i = 0; i < T; i++) {
-                for (let d = 0; d < D; d++) {
-                    let val = 0;
-                    for (let j = 0; j < T; j++)
-                        val += attnWeights[attnOff + i * T + j] * vData[vOff + j * D + d];
-                    out[outOff + i * D + d] = val;
-                }
+        for (let i = 0; i < T; i++) {
+            for (let d = 0; d < D; d++) {
+                let val = 0;
+                for (let j = 0; j < T; j++)
+                    val += attnWeights[attnOff + i * T + j] * vData[vOff + j * D + d];
+                out[outOff + i * D + d] = val;
             }
         }
     }
@@ -1215,72 +1220,63 @@ export function flashAttention(qId: number, kId: number, vId: number, scale: num
             inputIds: [qId, kId, vId],
             backward: (gId) => {
                 const gData = store.getContiguousData(gId);
-                const gradQ = new Float32Array(B * H * T * D);
-                const gradK = new Float32Array(B * H * T * D);
-                const gradV = new Float32Array(B * H * T * D);
-                const gradAttn = new Float32Array(T * T);
+                const gradQ = new Float32Array(totalElems);
+                const gradK = new Float32Array(totalElems);
+                const gradV = new Float32Array(totalElems);
 
-                for (let b = 0; b < B; b++) {
-                    for (let h = 0; h < H; h++) {
-                        const bhOff = (b * H + h);
-                        const qOff = bhOff * T * D;
-                        const kOff = bhOff * T * D;
-                        const vOff = bhOff * T * D;
-                        const attnOff = bhOff * T * T;
-                        const outOff = bhOff * T * D;
+                for (let b = 0; b < NB; b++) {
+                    const qOff = b * T * D;
+                    const kOff = b * T * D;
+                    const vOff = b * T * D;
+                    const attnOff = b * T * T;
+                    const outOff = b * T * D;
 
-                        // grad_V = attn^T @ grad_out
+                    for (let j = 0; j < T; j++) {
+                        for (let d = 0; d < D; d++) {
+                            let val = 0;
+                            for (let i = 0; i < T; i++)
+                                val += savedAttn[attnOff + i * T + j] * gData[outOff + i * D + d];
+                            gradV[vOff + j * D + d] += val;
+                        }
+                    }
+
+                    const gradAttn = new Float32Array(T * T);
+                    for (let i = 0; i < T; i++) {
                         for (let j = 0; j < T; j++) {
-                            for (let d = 0; d < D; d++) {
-                                let val = 0;
-                                for (let i = 0; i < T; i++)
-                                    val += savedAttn[attnOff + i * T + j] * gData[outOff + i * D + d];
-                                gradV[vOff + j * D + d] += val;
-                            }
+                            let val = 0;
+                            for (let d = 0; d < D; d++)
+                                val += gData[outOff + i * D + d] * savedV[vOff + j * D + d];
+                            gradAttn[i * T + j] = val;
                         }
+                    }
 
-                        // grad_attn = grad_out @ V^T
-                        gradAttn.fill(0);
-                        for (let i = 0; i < T; i++) {
-                            for (let j = 0; j < T; j++) {
-                                let val = 0;
-                                for (let d = 0; d < D; d++)
-                                    val += gData[outOff + i * D + d] * savedV[vOff + j * D + d];
-                                gradAttn[i * T + j] = val;
-                            }
+                    const gradScores = new Float32Array(T * T);
+                    for (let i = 0; i < T; i++) {
+                        let dot = 0;
+                        for (let j = 0; j < T; j++)
+                            dot += gradAttn[i * T + j] * savedAttn[attnOff + i * T + j];
+                        for (let j = 0; j < T; j++) {
+                            let gs = savedAttn[attnOff + i * T + j] * (gradAttn[i * T + j] - dot);
+                            if (causal && j > i) gs = 0;
+                            gradScores[i * T + j] = gs * scale;
                         }
+                    }
 
-                        // softmax backward: grad_scores = attn * (grad_attn - sum(grad_attn * attn, dim=-1))
-                        const gradScores = new Float32Array(T * T);
-                        for (let i = 0; i < T; i++) {
-                            let dot = 0;
+                    for (let i = 0; i < T; i++) {
+                        for (let d = 0; d < D; d++) {
+                            let val = 0;
                             for (let j = 0; j < T; j++)
-                                dot += gradAttn[i * T + j] * savedAttn[attnOff + i * T + j];
-                            for (let j = 0; j < T; j++) {
-                                let gs = savedAttn[attnOff + i * T + j] * (gradAttn[i * T + j] - dot);
-                                if (causal && j > i) gs = 0;
-                                gradScores[i * T + j] = gs * scale;
-                            }
+                                val += gradScores[i * T + j] * savedK[kOff + j * D + d];
+                            gradQ[qOff + i * D + d] += val;
                         }
+                    }
 
-                        // grad_Q = grad_scores @ K
-                        for (let i = 0; i < T; i++) {
-                            for (let d = 0; d < D; d++) {
-                                let val = 0;
-                                for (let j = 0; j < T; j++)
-                                    val += gradScores[i * T + j] * savedK[kOff + j * D + d];
-                                gradQ[qOff + i * D + d] += val;
-                            }
-                        }
-
-                        // grad_K = grad_scores^T @ Q
-                        for (let j = 0; j < T; j++) {
-                            for (let d = 0; d < D; d++) {
-                                let val = 0;
-                                for (let i = 0; i < T; i++)
-                                    val += gradScores[i * T + j] * savedQ[qOff + i * D + d];
-                                gradK[kOff + j * D + d] += val;
-                            }
+                    for (let j = 0; j < T; j++) {
+                        for (let d = 0; d < D; d++) {
+                            let val = 0;
+                            for (let i = 0; i < T; i++)
+                                val += gradScores[i * T + j] * savedQ[qOff + i * D + d];
+                            gradK[kOff + j * D + d] += val;
                         }
                     }
                 }
