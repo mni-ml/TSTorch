@@ -1,6 +1,6 @@
 {
   "name": "@mni-ml/framework-linux-x64-gnu-webgpu",
-  "version": "0.3.1",
+  "version": "0.3.4",
   "description": "Linux x64 WebGPU (Vulkan) native binary for @mni-ml/framework",
   "os": [
     "linux"
