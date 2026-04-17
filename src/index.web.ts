@@ -1,7 +1,7 @@
 import { _setNative } from "./tensor.js";
-import { loadNative } from "./native-loader.js";
+import { webNative } from "./web/native.js";
 
-_setNative(loadNative());
+_setNative(webNative);
 
 export { Tensor, native, type TensorLike, type Shape } from "./tensor.js";
 export { Module, Parameter } from "./module.js";

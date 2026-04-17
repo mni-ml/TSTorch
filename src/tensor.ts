@@ -1,119 +1,8 @@
-import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+export let native: any;
 
-const __dirname_f = dirname(fileURLToPath(import.meta.url));
-
-// Check whether CUDA drivers are available on this system.
-// The CUDA native binary will abort the process on load if the driver library is missing,
-// so we must check before attempting require().
-function hasCudaDriver(): boolean {
-    if (process.platform === 'linux') {
-        const searchPaths = [
-            '/usr/lib/x86_64-linux-gnu',
-            '/usr/lib64',
-            '/usr/local/cuda/lib64',
-            '/usr/local/cuda/targets/x86_64-linux/lib',
-            '/usr/lib',
-        ];
-        const ldPath = process.env['LD_LIBRARY_PATH'] ?? '';
-        if (ldPath) searchPaths.push(...ldPath.split(':').filter(Boolean));
-        for (const dir of searchPaths) {
-            if (existsSync(join(dir, 'libcuda.so')) || existsSync(join(dir, 'libcuda.so.1'))) {
-                return true;
-            }
-        }
-        return false;
-    }
-    if (process.platform === 'win32') {
-        const system32 = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32');
-        if (existsSync(join(system32, 'nvcuda.dll'))) return true;
-        const pathDirs = (process.env['PATH'] ?? '').split(';').filter(Boolean);
-        for (const dir of pathDirs) {
-            if (existsSync(join(dir, 'nvcuda.dll'))) return true;
-        }
-        return false;
-    }
-    return false;
+export function _setNative(backend: any) {
+    native = backend;
 }
-
-// Priority: CUDA (if driver detected) > WebGPU > CPU.
-// CUDA entries are only included when a CUDA driver is detected to prevent process abort.
-function getPlatformPackages(): Record<string, string[]> {
-    const cuda = hasCudaDriver();
-    return {
-        'darwin-arm64':  ['@mni-ml/framework-darwin-arm64-webgpu', '@mni-ml/framework-darwin-arm64'],
-        'darwin-x64':    ['@mni-ml/framework-darwin-x64-webgpu',   '@mni-ml/framework-darwin-x64'],
-        'linux-x64':     [
-            ...(cuda ? ['@mni-ml/framework-linux-x64-gnu-cuda'] : []),
-            '@mni-ml/framework-linux-x64-gnu-webgpu',
-            '@mni-ml/framework-linux-x64-gnu',
-        ],
-        'linux-arm64':   ['@mni-ml/framework-linux-arm64-gnu'],
-        'win32-x64':     [
-            ...(cuda ? ['@mni-ml/framework-win32-x64-msvc-cuda'] : []),
-            '@mni-ml/framework-win32-x64-msvc-webgpu',
-            '@mni-ml/framework-win32-x64-msvc',
-        ],
-    };
-}
-
-function getLocalSuffixes(): Record<string, string[]> {
-    const cuda = hasCudaDriver();
-    return {
-        'darwin-arm64': ['darwin-arm64-webgpu', 'darwin-arm64'],
-        'darwin-x64':   ['darwin-x64-webgpu',   'darwin-x64'],
-        'linux-x64':    [
-            ...(cuda ? ['linux-x64-gnu-cuda'] : []),
-            'linux-x64-gnu-webgpu',
-            'linux-x64-gnu',
-        ],
-        'linux-arm64':  ['linux-arm64-gnu'],
-        'win32-x64':    [
-            ...(cuda ? ['win32-x64-msvc-cuda'] : []),
-            'win32-x64-msvc-webgpu',
-            'win32-x64-msvc',
-        ],
-    };
-}
-
-function loadNative() {
-    const require = createRequire(import.meta.url);
-    const platform = process.platform;
-    const arch = process.arch;
-    const key = `${platform}-${arch}`;
-
-    // 1. Try prebuilt platform packages (GPU first, then CPU fallback)
-    const candidates_pkg = getPlatformPackages()[key] ?? [];
-    for (const pkgName of candidates_pkg) {
-        try { return require(pkgName); } catch {}
-    }
-
-    // 2. Fall back to a local .node file (dev builds / build-from-source)
-    //    GPU binaries are tried first, then CPU fallback.
-    const suffixes = getLocalSuffixes()[key] ?? [key];
-    const ext = platform === 'win32' ? 'dll' : platform === 'darwin' ? 'dylib' : 'so';
-    const candidates_file: string[] = [];
-    for (const suffix of suffixes) {
-        candidates_file.push(join(__dirname_f, '..', 'src', 'native', `mni-framework-native.${suffix}.node`));
-    }
-    candidates_file.push(join(__dirname_f, '..', 'src', 'native', 'target', 'release', `libmni_framework_native.${ext}`));
-    for (const p of candidates_file) {
-        if (existsSync(p)) {
-            return require(p);
-        }
-    }
-
-    const hint = candidates_pkg.length > 0
-        ? `\n  Install prebuilt: npm install ${candidates_pkg[candidates_pkg.length - 1]}\n  For CUDA: npm install ${candidates_pkg[0]}\n  Or build from source: cd src/native && cargo build --release`
-        : `\n  Build from source: cd src/native && cargo build --release`;
-    throw new Error(
-        `@mni-ml/framework: native addon not found for ${platform}-${arch}.${hint}`
-    );
-}
-
-export const native: any = loadNative();
 
 export type Shape = number[];
 
@@ -130,11 +19,10 @@ export class Tensor {
     get size(): number { return this._shape.reduce((a: number, b: number) => a * b, 1); }
     get dims(): number { return this._shape.length; }
 
-    // Compatibility stubs for old code that accesses .data.storage or .history
     get data(): { storage: Float32Array } {
         return { storage: this.toFloat32() };
     }
-    set history(_v: any) { /* no-op: autograd is in Rust */ }
+    set history(_v: any) { /* no-op: autograd is in native backend */ }
     get history(): null { return null; }
 
     // ---- Gradient ----
@@ -144,7 +32,7 @@ export class Tensor {
         if (gid == null) return null;
         return new Tensor(gid);
     }
-    set grad(_v: Tensor | null) { /* managed by Rust */ }
+    set grad(_v: Tensor | null) { /* managed by backend */ }
 
     backward(): void {
         native.backward(this._id);
@@ -269,7 +157,7 @@ export class Tensor {
         return new Tensor(native.maxOp(this._id, dim));
     }
 
-    // ---- Comparison (returns 0.0/1.0 tensors, no gradient) ----
+    // ---- Comparison ----
 
     lt(other: Tensor): Tensor {
         return new Tensor(native.lt(this._id, other._id));

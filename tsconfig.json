@@ -21,7 +21,14 @@
     "src/module.ts",
     "src/nn.ts",
     "src/optimizer.ts",
-    "src/index.ts"
+    "src/index.ts",
+    "src/index.web.ts",
+    "src/native-loader.ts",
+    "src/web/store.ts",
+    "src/web/tape.ts",
+    "src/web/ops.ts",
+    "src/web/optimizer.ts",
+    "src/web/native.ts"
   ],
   "exclude": [
     "**/*.test.ts",
