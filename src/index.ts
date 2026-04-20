@@ -11,6 +11,7 @@ export {
     softmax, logsoftmax, gelu, dropout,
     crossEntropyLoss, crossEntropyLossGpu, mseLoss, layerNorm,
     flashAttention, residualLayerNorm, biasGelu,
+    KvCache,
     randRange, tile, avgpool2d, maxpool2d,
 } from "./nn.js";
 export { Optimizer, SGD, Adam, GradScaler, type ParameterValue } from "./optimizer.js";
