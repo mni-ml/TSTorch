@@ -14,7 +14,7 @@ use crate::kernels;
 use crate::tensor::{TensorId, TensorStore};
 use cuda_async::device_operation::DeviceOp;
 use cutile::api;
-use cutile::tensor::{PartitionMut, Tensor};
+use cutile::tensor::{PartitionMut, Reshape, Tensor};
 use cutile::tile_kernel::{TileKernel, ToHostVecOp};
 
 /// Average-pool 2D forward: `out[n, c, oh, ow] = mean(inp[n, c, oh*KH..oh*KH+KH, ow*KW..ow*KW+KW])`.
@@ -37,17 +37,24 @@ pub fn avgpool2d_forward(
     let ow = w / kw;
 
     let rt = runtime();
-    let mut out = api::zeros::<f32>(&[n, c, oh, ow])
+    let nc = n * c;
+    let mut out_flat = api::zeros::<f32>(&[nc, oh, ow])
         .sync_on(&rt.stream)
         .expect("alloc out");
     {
         let it = store.tensor(inp);
-        let iv = it.view(&[n, c, h, w]).expect("view inp");
-        let _ = kernels::avgpool2d_forward((&mut out).partition([1, 1, 1, 1]), &iv)
-            .generics(vec![kh.to_string(), kw.to_string()])
-            .sync_on(&rt.stream)
-            .expect("avgpool2d_forward kernel");
+        let iv = it.view(&[nc, h, w]).expect("view inp");
+        let inv_kh_kw = 1.0f32 / (kh * kw) as f32;
+        let _ = kernels::avgpool2d_forward(
+            (&mut out_flat).partition([1, 1, 1]),
+            &iv,
+            inv_kh_kw,
+        )
+        .generics(vec![kh.to_string(), kw.to_string()])
+        .sync_on(&rt.stream)
+        .expect("avgpool2d_forward kernel");
     }
+    let out = out_flat.reshape(&[n, c, oh, ow]).expect("reshape out");
     store.insert_tensor(out, vec![n, c, oh, ow])
 }
 
@@ -69,17 +76,24 @@ pub fn avgpool2d_backward(
     let h = oh * kh;
     let w = ow * kw;
     let rt = runtime();
-    let mut dinp = api::zeros::<f32>(&[n, c, h, w])
+    let nc = n * c;
+    let mut dinp_flat = api::zeros::<f32>(&[nc, h, w])
         .sync_on(&rt.stream)
         .expect("alloc dinp");
     {
         let dt = store.tensor(dout);
-        let dv = dt.view(&[n, c, oh, ow]).expect("view dout");
-        let _ = kernels::avgpool2d_backward((&mut dinp).partition([1, 1, kh, kw]), &dv)
-            .generics(vec![kh.to_string(), kw.to_string()])
-            .sync_on(&rt.stream)
-            .expect("avgpool2d_backward kernel");
+        let dv = dt.view(&[nc, oh, ow]).expect("view dout");
+        let inv_kh_kw = 1.0f32 / (kh * kw) as f32;
+        let _ = kernels::avgpool2d_backward(
+            (&mut dinp_flat).partition([1, kh, kw]),
+            &dv,
+            inv_kh_kw,
+        )
+        .generics(vec![kh.to_string(), kw.to_string()])
+        .sync_on(&rt.stream)
+        .expect("avgpool2d_backward kernel");
     }
+    let dinp = dinp_flat.reshape(&[n, c, h, w]).expect("reshape dinp");
     store.insert_tensor(dinp, vec![n, c, h, w])
 }
 
@@ -115,24 +129,26 @@ pub fn maxpool2d_forward(
     let ow = w / kw;
 
     let rt = runtime();
-    let mut out = api::zeros::<f32>(&[n, c, oh, ow])
+    let nc = n * c;
+    let mut out_flat = api::zeros::<f32>(&[nc, oh, ow])
         .sync_on(&rt.stream)
         .expect("alloc out");
-    let mut argmax = api::zeros::<i32>(&[n, c, oh, ow])
+    let mut argmax = api::zeros::<i32>(&[nc, oh, ow])
         .sync_on(&rt.stream)
         .expect("alloc argmax");
     {
         let it = store.tensor(inp);
-        let iv = it.view(&[n, c, h, w]).expect("view inp");
+        let iv = it.view(&[nc, h, w]).expect("view inp");
         let _ = kernels::maxpool2d_forward(
-            (&mut out).partition([1, 1, 1, 1]),
-            (&mut argmax).partition([1, 1, 1, 1]),
+            (&mut out_flat).partition([1, 1, 1]),
+            (&mut argmax).partition([1, 1, 1]),
             &iv,
         )
         .generics(vec![kh.to_string(), kw.to_string()])
         .sync_on(&rt.stream)
         .expect("maxpool2d_forward kernel");
     }
+    let out = out_flat.reshape(&[n, c, oh, ow]).expect("reshape out");
     let out_id = store.insert_tensor(out, vec![n, c, oh, ow]);
     MaxPoolState {
         out: out_id,
