@@ -4,6 +4,19 @@
 //! runtime-specified offsets — one block per batch element, one block_size
 //! tile of `i32` per (inputs, targets).  Matches the CUDA
 //! `sample_batch_i32` semantics (targets are shifted by +1).
+//!
+//! ## Why the pointer-tile gather (not view-based loads)
+//!
+//! TMA-lowerable view loads (`partition(tile).load(idx)`) require `idx` in
+//! *tile units* — valid element starts are `0, BLOCK, 2·BLOCK, …`.  GPT-style
+//! training sampling picks arbitrary random token positions (e.g. `7, 42, 3`)
+//! that are not multiples of `BLOCK`, so there is no way to express
+//! "load `BLOCK` contiguous elements starting at runtime offset `s`" as a
+//! single tile-aligned `load_from_view`.  TMA descriptors are also fixed at
+//! launch, so per-block variable offsets are outside the TMA model entirely.
+//! The CUDA C++ SIMT reference has the same constraint and uses a scalar
+//! per-thread loop; this cuTile version improves on it by doing a
+//! block-cooperative vectorized gather via `load_ptr_tko`.
 
 #[cutile::module]
 pub mod data_kernels {
