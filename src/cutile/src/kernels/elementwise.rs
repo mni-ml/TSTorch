@@ -308,7 +308,7 @@ pub mod elementwise_kernels {
     /// branches explicit (rather than folding all four unconditionally)
     /// so unused levels don't generate division-by-zero lanes.
     #[cutile::entry()]
-    pub unsafe fn permute<const BLOCK: i32>(
+    pub unsafe fn permute_runtime<const BLOCK: i32>(
         out_ptr: *mut f32,
         src_ptr: *mut f32,
         n: i32,
@@ -387,6 +387,6 @@ pub mod elementwise_kernels {
 
 pub use elementwise_kernels::{
     add, add_bias, broadcast_add, broadcast_mul, copy, div, div_backward_a, div_backward_b, eq,
-    exp_f32, fill, gt, is_close, log_f32, lt, mul, mul_scalar, neg, permute, pow_backward_f32,
-    pow_f32, saxpy, sub,
+    exp_f32, fill, gt, is_close, log_f32, lt, mul, mul_scalar, neg, permute_runtime,
+    pow_backward_f32, pow_f32, saxpy, sub,
 };

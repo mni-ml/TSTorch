@@ -405,7 +405,7 @@ pub fn permute(store: &mut TensorStore, a: TensorId, perm: &[usize]) -> TensorId
         let src_ptr = src_t.device_pointer();
         let out_ptr = out.device_pointer();
         unsafe {
-            let _ = kernels::permute(
+            let _ = kernels::permute_runtime(
                 out_ptr,
                 src_ptr,
                 n as i32,
