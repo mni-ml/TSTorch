@@ -7,10 +7,14 @@
 pub mod activation;
 pub mod attention;
 pub mod conv;
+pub mod data;
 pub mod dropout;
 pub mod elementwise;
+pub mod embedding;
 pub mod fused;
 pub mod grad_util;
+pub mod kv_quant;
+pub mod loss;
 pub mod matmul;
 pub mod mixed_precision;
 pub mod norm;
