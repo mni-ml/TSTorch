@@ -2,12 +2,14 @@
 //!
 //! Two flavors of reduction:
 //!
-//! 1. **Global reductions** (`sum_block`) drive both passes of the CUB-style
-//!    strict two-pass global reduction — see `ops/reduce.rs`.  The last
-//!    block in pass 1 and the sole block in pass 2 handle the "partial
-//!    tile" case automatically: cuTile's `Tensor::partition()` returns a
-//!    zero-padded view, so out-of-range tile lanes load the additive
-//!    identity 0.0f32 and the reduction stays correct for arbitrary `n`.
+//! 1. **Global reductions** (`sum_atomic`) run a single pass: each block
+//!    in-tile-reduces its `BLOCK`-sized chunk via `reduce_sum` and then
+//!    `atomic_rmw_tko "addf"`s the partial into a single scalar output
+//!    location — same shape as the CUDA C++ SIMT backend's `sum_all` kernel.
+//!    The last block is the usual "partial tile" case: cuTile's
+//!    `Tensor::partition()` returns a zero-padded view so out-of-range
+//!    lanes contribute the additive identity `0.0f32`, and the reduction
+//!    stays correct for arbitrary `n`.
 //!
 //! 2. **Along-dim reductions** (`sum_along_last`, `mean_along_last`,
 //!    `max_along_last`) are 1-block-per-output-row kernels that collapse
@@ -24,11 +26,16 @@
 pub mod reduce_kernels {
     use cutile::core::*;
 
-    /// Reduce a `BLOCK`-sized tile of `x` to a single scalar via
-    /// `reduce_sum`, writing it at `pid.0` in `z`.
+    /// Single-pass atomic global sum.
+    ///
+    /// Each block reduces its `BLOCK`-sized tile of `x` with `reduce_sum`
+    /// and `atomic_rmw_tko "addf"`s the partial into `out_ptr[0]`.  The
+    /// caller zero-initialises `*out_ptr` before launch; the grid size is
+    /// `ceil(n / BLOCK)`.  Tail handling is automatic via cuTile's
+    /// zero-padded `partition()` — out-of-range lanes load `0.0f32`.
     #[cutile::entry()]
-    pub fn sum_block<const BLOCK: i32>(
-        z: &mut Tensor<f32, { [1] }>,
+    pub unsafe fn sum_atomic<const BLOCK: i32>(
+        out_ptr: *mut f32,
         x: &Tensor<f32, { [-1] }>,
     ) {
         let pid: (i32, i32, i32) = get_tile_block_id();
@@ -36,7 +43,17 @@ pub mod reduce_kernels {
         let tile_x: Tile<f32, { [BLOCK] }> = part_x.load([pid.0]);
         let s_scalar: Tile<f32, { [] }> = reduce_sum(tile_x, 0i32);
         let s_one: Tile<f32, { [1] }> = s_scalar.reshape(const_shape![1]);
-        z.store(s_one);
+        let base: PointerTile<*mut f32, { [] }> = pointer_to_tile(out_ptr);
+        let base_1: PointerTile<*mut f32, { [1] }> = base.reshape(const_shape![1]);
+        let (_old, _tok): (Tile<f32, { [1] }>, Token) = atomic_rmw_tko(
+            base_1,
+            s_one,
+            "addf",
+            "relaxed",
+            "device",
+            None,
+            None,
+        );
     }
 
     /// `out[r] = Σⱼ x[r, j]`.  One block per row tile.
@@ -113,5 +130,5 @@ pub mod reduce_kernels {
 }
 
 pub use reduce_kernels::{
-    broadcast_last, max_along_last, mean_along_last, sum_along_first, sum_along_last, sum_block,
+    broadcast_last, max_along_last, mean_along_last, sum_along_first, sum_along_last, sum_atomic,
 };

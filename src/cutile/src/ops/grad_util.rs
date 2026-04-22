@@ -1,15 +1,15 @@
 //! Gradient utility ops: in-place clip, global L2 norm-squared.
 //!
-//! `grad_norm_sq` runs the CUB-style two-pass reduction on top of
-//! `grad_norm_sq_partial` (pass 1) and `sum_block` (pass 2) — same pattern
-//! as `ops::reduce::sum_all`, but with `gradᵢ²` as the per-element value.
+//! `grad_norm_sq` single-passes `Σ gradᵢ²` via `grad_norm_sq_atomic` —
+//! same pattern as `ops::reduce::sum_all`, matching the CUDA C++ SIMT
+//! backend.
 
 use crate::device::runtime;
 use crate::kernels;
 use crate::tensor::{shape_size, TensorId, TensorStore};
 use cuda_async::device_operation::DeviceOp;
 use cutile::api;
-use cutile::tensor::{PartitionMut, Tensor};
+use cutile::tensor::PartitionMut;
 use cutile::tile_kernel::TileKernel;
 
 const CANDIDATE_BLOCKS: [usize; 9] = [256, 128, 64, 32, 16, 8, 4, 2, 1];
@@ -23,20 +23,9 @@ fn pick_block(n: usize) -> usize {
     1
 }
 
-const PASS1_BLOCK: usize = 2048;
-const FINAL_BLOCKS: [usize; 12] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
-
-fn pick_final_block(n: usize) -> usize {
-    for &b in &FINAL_BLOCKS {
-        if b >= n {
-            return b;
-        }
-    }
-    panic!(
-        "grad_norm_sq size {n} exceeds max pass-2 tile {}",
-        FINAL_BLOCKS[FINAL_BLOCKS.len() - 1]
-    )
-}
+/// Elements-per-block for the single-pass atomic norm-squared reduction.
+/// Matches the CUDA C++ SIMT backend's block size.
+const NORM_SQ_BLOCK: usize = 1024;
 
 /// In-place `grad *= scale`.  Returns the same `grad` id for convenience.
 pub fn grad_clip(store: &mut TensorStore, grad: TensorId, scale: f32) -> TensorId {
@@ -62,36 +51,21 @@ pub fn grad_norm_sq(store: &mut TensorStore, grad: TensorId) -> TensorId {
         return store.from_slice(&[0.0f32], &[1]);
     }
 
-    // Pass 1: per-block partial sum of squares.
-    let nblocks1 = n.div_ceil(PASS1_BLOCK);
-    let mut partials = api::zeros::<f32>(&[nblocks1])
+    let result = api::zeros::<f32>(&[1])
         .sync_on(&rt.stream)
-        .expect("alloc partials");
+        .expect("alloc result");
+    let result_ptr = result.device_pointer();
+    let grid = n.div_ceil(NORM_SQ_BLOCK) as u32;
     {
         let gt = store.tensor(grad);
         let gv = gt.view(&[n]).expect("view grad");
-        let _ = kernels::grad_norm_sq_partial((&mut partials).partition([1]), &gv)
-            .generics(vec![PASS1_BLOCK.to_string()])
-            .sync_on(&rt.stream)
-            .expect("grad_norm_sq_partial");
-    }
-
-    // Pass 2: single-block sum over partials (zero-padded slack).
-    launch_final_reduce(store, &partials, nblocks1)
-}
-
-fn launch_final_reduce(store: &mut TensorStore, src: &Tensor<f32>, len: usize) -> TensorId {
-    let rt = runtime();
-    let block = pick_final_block(len);
-    let mut result = api::zeros::<f32>(&[1])
-        .sync_on(&rt.stream)
-        .expect("alloc result");
-    {
-        let sv = src.view(&[len]).expect("view src");
-        let _ = kernels::sum_block((&mut result).partition([1]), &sv)
-            .generics(vec![block.to_string()])
-            .sync_on(&rt.stream)
-            .expect("sum_block final");
+        unsafe {
+            let _ = kernels::grad_norm_sq_atomic(result_ptr, &gv)
+                .grid((grid, 1, 1))
+                .generics(vec![NORM_SQ_BLOCK.to_string()])
+                .sync_on(&rt.stream)
+                .expect("grad_norm_sq_atomic kernel");
+        }
     }
     store.insert_tensor(result, vec![1])
 }

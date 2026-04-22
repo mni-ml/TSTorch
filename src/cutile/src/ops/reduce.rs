@@ -1,7 +1,7 @@
 //! Reduction ops on top of the cuTile reduce kernels.
 //!
-//! * **Global sum / mean** — `sum_all`, `mean_all` drive the two-pass
-//!   `sum_block` reduction described below.
+//! * **Global sum / mean** — `sum_all`, `mean_all` drive the single-pass
+//!   atomic `sum_atomic` kernel described below.
 //! * **Along-dim sum / mean / max** — `sum_along_dim` & friends collapse a
 //!   single axis.  The kernels (`*_along_last`) only reduce the last axis;
 //!   the ops layer permutes arbitrary axes to the last position via the
@@ -10,18 +10,14 @@
 //!   back across a new last dim, matching `sum_broadcast_f32` in the CUDA
 //!   backend.
 //!
-//! Global reductions use a strict two-pass pattern on top of cuTile.
-//! Pass 1 (multi-block): launches `sum_block::<PASS1_BLOCK>` with a grid of
-//! `ceil(n / PASS1_BLOCK)` blocks.  Each block does an in-tile `reduce_sum`
-//! and writes one scalar into a partials buffer — O(n) → O(n / PASS1_BLOCK).
-//! Pass 2 (single block): launches the same `sum_block` kernel with grid = 1
-//! and a BLOCK const large enough to cover all of pass 1's partials.
-//!
-//! The last block in pass 1 and the sole block in pass 2 are the usual
-//! "partial tile" case: when `n` (resp. `nblocks1`) is not a multiple of
-//! the tile size, `Tensor::partition()` returns a zero-padded view so
-//! out-of-range tile lanes load 0.0f32 — the identity for sum.  No host
-//! tail, no divisibility constraints on n.
+//! Global reductions follow the CUDA C++ SIMT backend's pattern:
+//! single-pass atomic.  We launch `sum_atomic::<BLOCK>` with a grid of
+//! `ceil(n / BLOCK)` blocks; each block does an in-tile `reduce_sum` and
+//! `atomic_rmw_tko "addf"`s the partial into a zero-initialised scalar
+//! output buffer.  Tail handling is automatic — cuTile's `partition()`
+//! returns a zero-padded view, so out-of-range lanes contribute the
+//! additive identity `0.0f32` and the reduction stays correct for any
+//! `n` with no divisibility constraints.
 
 use crate::device::runtime;
 use crate::kernels;
@@ -31,23 +27,9 @@ use cutile::api;
 use cutile::tensor::{PartitionMut, Reshape, Tensor};
 use cutile::tile_kernel::TileKernel;
 
-/// Elements-per-block in pass 1 of the global reduction.
-const PASS1_BLOCK: usize = 2048;
-
-/// Candidate pass-2 tile sizes (powers of 2).
-const FINAL_BLOCKS: [usize; 12] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
-
-fn pick_final_block(n: usize) -> usize {
-    for &b in &FINAL_BLOCKS {
-        if b >= n {
-            return b;
-        }
-    }
-    panic!(
-        "reduce size {n} exceeds max pass-2 tile {}",
-        FINAL_BLOCKS[FINAL_BLOCKS.len() - 1]
-    )
-}
+/// Elements-per-block for the single-pass atomic reduction.  Matches the
+/// CUDA C++ SIMT backend's block size.
+const SUM_BLOCK: usize = 1024;
 
 /// Sum over all elements.  Returns a new scalar tensor with shape `[1]`.
 pub fn sum_all(store: &mut TensorStore, a: TensorId) -> TensorId {
@@ -56,10 +38,6 @@ pub fn sum_all(store: &mut TensorStore, a: TensorId) -> TensorId {
 
     if n == 0 {
         return store.from_slice(&[0.0f32], &[1]);
-    }
-    if n == 1 {
-        let host = store.to_host(a);
-        return store.from_slice(&host, &[1]);
     }
 
     let input_1d: Tensor<f32> = store
@@ -70,39 +48,20 @@ pub fn sum_all(store: &mut TensorStore, a: TensorId) -> TensorId {
         .reshape(&[n])
         .expect("reshape input to 1D");
 
-    let max_final = *FINAL_BLOCKS.last().unwrap();
-
-    if n <= max_final {
-        return launch_final_reduce(store, &input_1d, n);
-    }
-
-    let nblocks1 = n.div_ceil(PASS1_BLOCK);
-    let mut partials = api::zeros::<f32>(&[nblocks1])
-        .sync_on(&rt.stream)
-        .expect("alloc partials");
-    {
-        let xv = input_1d.view(&[n]).expect("view input");
-        let _ = kernels::sum_block((&mut partials).partition([1]), &xv)
-            .generics(vec![PASS1_BLOCK.to_string()])
-            .sync_on(&rt.stream)
-            .expect("sum_block pass 1");
-    }
-
-    launch_final_reduce(store, &partials, nblocks1)
-}
-
-fn launch_final_reduce(store: &mut TensorStore, src: &Tensor<f32>, len: usize) -> TensorId {
-    let rt = runtime();
-    let block = pick_final_block(len);
-    let mut result = api::zeros::<f32>(&[1])
+    let result = api::zeros::<f32>(&[1])
         .sync_on(&rt.stream)
         .expect("alloc result");
+    let result_ptr = result.device_pointer();
+    let grid = n.div_ceil(SUM_BLOCK) as u32;
     {
-        let sv = src.view(&[len]).expect("view src");
-        let _ = kernels::sum_block((&mut result).partition([1]), &sv)
-            .generics(vec![block.to_string()])
-            .sync_on(&rt.stream)
-            .expect("sum_block final");
+        let xv = input_1d.view(&[n]).expect("view input");
+        unsafe {
+            let _ = kernels::sum_atomic(result_ptr, &xv)
+                .grid((grid, 1, 1))
+                .generics(vec![SUM_BLOCK.to_string()])
+                .sync_on(&rt.stream)
+                .expect("sum_atomic kernel");
+        }
     }
     store.insert_tensor(result, vec![1])
 }
