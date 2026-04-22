@@ -5,6 +5,13 @@
 //! allocated result tensor.
 
 pub mod activation;
+pub mod dropout;
 pub mod elementwise;
+pub mod fused;
+pub mod grad_util;
 pub mod matmul;
+pub mod mixed_precision;
+pub mod norm;
+pub mod optimizer;
 pub mod reduce;
+pub mod softmax;
